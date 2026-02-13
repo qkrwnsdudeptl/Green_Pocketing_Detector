@@ -1,21 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Calendar, Package, Plus, Trash2, Save, X, ChevronLeft, ChevronRight, Printer, Download, Upload, FileJson, AlertTriangle, BarChart3, FileText, FileType, Search, ArrowUp, ArrowDown, CheckCircle, FolderOpen } from 'lucide-react';
+import { engToKor } from './hangeul.js'; 
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('calendar'); 
   const [currentDate, setCurrentDate] = useState(new Date()); 
-  const [saveStatus, setSaveStatus] = useState(''); // 저장 상태 메시지
+  const [saveStatus, setSaveStatus] = useState(''); 
 
-  // --- 초기 데이터 로드 ---
   const [items, setItems] = useState([]);
   const [logs, setLogs] = useState({});
 
-  // --- 🔥 [핵심] 앱 실행 시 파일 자동 불러오기 ---
+  // 🔥 캡스락 감지용 State
+  const [isCapsLockOn, setIsCapsLockOn] = useState(false);
+
   useEffect(() => {
     const initData = async () => {
       let loaded = false;
-      
-      // 1. Electron(내 컴퓨터 파일)에서 불러오기 시도
       if (window.electron) {
         try {
           const data = await window.electron.loadData();
@@ -29,13 +29,10 @@ export default function App() {
           console.error("파일 불러오기 실패:", error);
         }
       }
-
-      // 2. 파일이 없으면 로컬스토리지(웹)에서 불러오기 (백업)
       if (!loaded) {
         try {
           const savedItems = localStorage.getItem('inventory_items');
           const savedLogs = localStorage.getItem('inventory_logs');
-          
           if (savedItems) setItems(JSON.parse(savedItems));
           else setItems([
             { id: 1, name: '락스 2L', isDeleted: false },
@@ -44,40 +41,29 @@ export default function App() {
             { id: 4, name: '수세미', isDeleted: false },
             { id: 5, name: '고무장갑', isDeleted: false },
           ]);
-
           if (savedLogs) setLogs(JSON.parse(savedLogs));
-        } catch(e) {
-          console.error("초기화 실패", e);
-        }
+        } catch(e) { console.error("초기화 실패", e); }
       }
     };
     initData();
   }, []);
 
-  // --- 🔥 [핵심] 데이터 변경 시 자동 저장 ---
   const saveDataToLocal = () => {
-    // 1. 웹 브라우저 저장
     localStorage.setItem('inventory_items', JSON.stringify(items));
     localStorage.setItem('inventory_logs', JSON.stringify(logs));
-
-    // 2. 내 컴퓨터 파일 저장 (Electron)
     if (window.electron) {
       window.electron.saveData({ items, logs });
-      // 저장 알림 표시
       setSaveStatus('저장됨');
       setTimeout(() => setSaveStatus(''), 2000);
     }
   };
 
-  // items나 logs가 변할 때마다 저장 실행
   useEffect(() => {
     if (items.length > 0 || Object.keys(logs).length > 0) {
       saveDataToLocal();
     }
   }, [items, logs]);
 
-
-  // ESC 키로 모달 닫기
   useEffect(() => {
     const handleEsc = (event) => {
       if (event.key === 'Escape') {
@@ -95,11 +81,8 @@ export default function App() {
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: '', onConfirm: null });
   const [isDragging, setIsDragging] = useState(false);
   const dragCounter = useRef(0);
-
-  // --- 연간 통계용 상태 ---
   const [selectedOrg, setSelectedOrg] = useState('ALL'); 
 
-  // --- 달력 로직 ---
   const getDaysInMonth = (date) => {
     const year = date.getFullYear();
     const month = date.getMonth();
@@ -120,7 +103,6 @@ export default function App() {
     return d1 && d2 && d1.getFullYear() === d2.getFullYear() && d1.getMonth() === d2.getMonth() && d1.getDate() === d2.getDate();
   };
 
-  // --- 통계 및 보고서 로직 ---
   const getMonthlyStats = () => {
     const stats = {};
     const days = getDaysInMonth(currentDate);
@@ -243,8 +225,16 @@ export default function App() {
     setNewItemData({ itemId: firstValidItem?.id || '', org: '', qty: '' });
   };
 
-  // 🔥 엔터키 핸들러
+  // 🔥 캡스락 체크 함수
+  const checkCapsLock = (e) => {
+    if (e.getModifierState) {
+      // getModifierState가 지원되는 이벤트인지 확인 후 체크
+      setIsCapsLockOn(e.getModifierState('CapsLock'));
+    }
+  };
+
   const handleKeyDown = (e) => {
+    checkCapsLock(e); // 키 누를 때마다 체크
     if (e.key === 'Enter') {
       handleAddItem();
     }
@@ -362,7 +352,6 @@ export default function App() {
               <Calendar className="w-6 h-6" />
               녹색마을만들기 물품 대장
             </h1>
-            {/* 저장 상태 표시 */}
             {saveStatus && (
               <span className="text-xs bg-emerald-800 text-emerald-100 px-2 py-1 rounded animate-pulse flex items-center gap-1">
                 <CheckCircle className="w-3 h-3" /> {saveStatus}
@@ -575,7 +564,7 @@ export default function App() {
       </div>
 
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[110] p-4 no-print">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[110] p-4 no-print">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
             <div className="bg-emerald-600 text-white p-4 flex justify-between items-center"><h3 className="font-bold text-lg flex items-center gap-2"><Calendar className="w-5 h-5" />{selectedDate} 기록</h3><button onClick={() => setIsModalOpen(false)} className="hover:bg-emerald-700 p-1 rounded"><X className="w-5 h-5" /></button></div>
             <div className="p-6 space-y-4">
@@ -591,7 +580,28 @@ export default function App() {
                 <div className="grid grid-cols-3 gap-2">
                   <div className="col-span-2">
                     <label className="block text-xs font-bold text-gray-500 mb-1">기관 이름</label>
-                    <input type="text" placeholder="예: 낭성복지회관" value={newItemData.org} onChange={(e) => setNewItemData({...newItemData, org: e.target.value})} onKeyDown={handleKeyDown} className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500" />
+                    
+                    {/* 🔥 [캡스락 경고 메시지] 조건부 렌더링 */}
+                    {isCapsLockOn && (
+                      <span className="ml-2 text-xs bg-red-500 text-white px-2 py-0.5 rounded animate-pulse">
+                        ⚠️ Caps Lock 켜짐: 상시 쌍자음 주의.
+                      </span>
+                    )}
+
+                    {/* 🔥 [롤백됨] onChange는 단순 변환, 캡스락 체크는 onKeyDown/onClick에서 */}
+                    <input 
+                      type="text" 
+                      placeholder="예: 낭성복지회관" 
+                      value={newItemData.org} 
+                      onChange={(e) => {
+                        checkCapsLock(e.nativeEvent); // 타이핑 중에도 상태 체크
+                        const converted = engToKor(e.target.value);
+                        setNewItemData({...newItemData, org: converted});
+                      }} 
+                      onKeyDown={handleKeyDown} 
+                      onClick={(e) => checkCapsLock(e.nativeEvent)} // 클릭했을 때도 체크
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500" 
+                    />
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-500 mb-1">수량</label>
