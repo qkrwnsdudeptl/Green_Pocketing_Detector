@@ -10,8 +10,9 @@ export default function App() {
   const [items, setItems] = useState([]);
   const [logs, setLogs] = useState({});
 
-  // 🔥 캡스락 감지용 State
   const [isCapsLockOn, setIsCapsLockOn] = useState(false);
+  // 🔥 [추가] 팝업 대신 화면에 에러를 띄우기 위한 상태
+  const [inputError, setInputError] = useState('');
 
   useEffect(() => {
     const initData = async () => {
@@ -22,7 +23,6 @@ export default function App() {
           if (data) {
             if (data.items) setItems(data.items);
             if (data.logs) setLogs(data.logs);
-            console.log("📂 내 문서 파일에서 데이터 로드 완료!");
             loaded = true;
           }
         } catch (error) {
@@ -69,6 +69,7 @@ export default function App() {
       if (event.key === 'Escape') {
         setIsModalOpen(false);
         setConfirmModal({ isOpen: false, message: '', onConfirm: null });
+        setInputError(''); // 모달 닫을 때 에러 초기화
       }
     };
     window.addEventListener('keydown', handleEsc);
@@ -201,16 +202,24 @@ export default function App() {
     if (!date) return;
     setSelectedDate(formatDateKey(date));
     setIsModalOpen(true);
+    setInputError(''); // 모달 열 때 에러 초기화
     const firstValidItem = items.find(i => !i.isDeleted);
     setNewItemData({ itemId: firstValidItem?.id || '', org: '', qty: '' });
   };
 
   const handleAddItem = () => {
-    if (!newItemData.itemId || !newItemData.qty) return;
-    if (Number(newItemData.qty) <= 0) {
-      alert("수량은 1개 이상이어야 합니다!");
+    // 🔥 [수정] 팝업창(alert) 삭제하고 에러 텍스트로 처리
+    if (!newItemData.itemId) {
+      setInputError("물품을 선택해주세요.");
       return;
     }
+    if (!newItemData.qty || Number(newItemData.qty) <= 0) {
+      setInputError("수량은 1개 이상 입력해야 합니다!");
+      return;
+    }
+    
+    setInputError(''); // 성공 시 에러 클리어
+
     const newEntry = {
       id: Date.now(),
       itemId: Number(newItemData.itemId),
@@ -225,16 +234,14 @@ export default function App() {
     setNewItemData({ itemId: firstValidItem?.id || '', org: '', qty: '' });
   };
 
-  // 🔥 캡스락 체크 함수
   const checkCapsLock = (e) => {
     if (e.getModifierState) {
-      // getModifierState가 지원되는 이벤트인지 확인 후 체크
       setIsCapsLockOn(e.getModifierState('CapsLock'));
     }
   };
 
   const handleKeyDown = (e) => {
-    checkCapsLock(e); // 키 누를 때마다 체크
+    checkCapsLock(e); 
     if (e.key === 'Enter') {
       handleAddItem();
     }
@@ -576,25 +583,33 @@ export default function App() {
               </div>
               <div className="space-y-3 border-t pt-4">
                 <h4 className="text-sm font-bold text-gray-700">새 항목 추가</h4>
+                
+                {/* 🔥 [추가] 에러 메시지 표시 영역 */}
+                {inputError && (
+                  <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded text-sm font-bold mb-2 flex items-center gap-2 animate-pulse">
+                    <AlertTriangle className="w-4 h-4" /> {inputError}
+                  </div>
+                )}
+
                 <div><label className="block text-xs font-bold text-gray-500 mb-1">물품 선택</label><div className="relative"><select value={newItemData.itemId} onChange={(e) => setNewItemData({...newItemData, itemId: e.target.value})} className="w-full border border-gray-300 rounded-lg pl-3 pr-8 py-2 appearance-none focus:ring-2 focus:ring-emerald-500 bg-white">{items.filter(item => !item.isDeleted).map(item => (<option key={item.id} value={item.id}>{item.name}</option>))}</select><div className="absolute right-3 top-2.5 pointer-events-none text-gray-500">▼</div></div></div>
                 <div className="grid grid-cols-3 gap-2">
                   <div className="col-span-2">
                     <label className="block text-xs font-bold text-gray-500 mb-1">기관 이름</label>
                     
-                    {/* 🔥 [캡스락 경고 메시지] 조건부 렌더링 */}
+                    {/* 🔥 캡스락 경고 메시지 */}
                     {isCapsLockOn && (
                       <span className="ml-2 text-xs bg-red-500 text-white px-2 py-0.5 rounded animate-pulse">
-                        ⚠️ Caps Lock 켜짐: 상시 쌍자음 주의.
+                        ⚠️ Caps Lock 켜짐
                       </span>
                     )}
 
-                    {/* 🔥 [롤백됨] onChange는 단순 변환, 캡스락 체크는 onKeyDown/onClick에서 */}
                     <input 
                       type="text" 
                       placeholder="예: 낭성복지회관" 
                       value={newItemData.org} 
                       onChange={(e) => {
                         checkCapsLock(e.nativeEvent); // 타이핑 중에도 상태 체크
+                        setInputError(''); // 타이핑하면 에러 클리어
                         const converted = engToKor(e.target.value);
                         setNewItemData({...newItemData, org: converted});
                       }} 
@@ -605,7 +620,7 @@ export default function App() {
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-500 mb-1">수량</label>
-                    <input type="number" placeholder="0" value={newItemData.qty} onChange={(e) => setNewItemData({...newItemData, qty: e.target.value})} onKeyDown={handleKeyDown} className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500" />
+                    <input type="number" placeholder="0" value={newItemData.qty} onChange={(e) => { setInputError(''); setNewItemData({...newItemData, qty: e.target.value}); }} onKeyDown={handleKeyDown} className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500" />
                   </div>
                 </div>
                 <button onClick={handleAddItem} className="w-full bg-emerald-600 text-white font-bold py-3 rounded-lg hover:bg-emerald-700 flex justify-center items-center gap-2 mt-2"><Save className="w-4 h-4" /> 입력하기</button>
