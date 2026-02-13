@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Calendar, Package, Plus, Trash2, Save, X, ChevronLeft, ChevronRight, Printer, Download, Upload, FileJson, AlertTriangle, BarChart3, FileText, FileType, Search, ArrowUp, ArrowDown, CheckCircle, FolderOpen } from 'lucide-react';
+import { Calendar, Package, Plus, Trash2, Save, X, ChevronLeft, ChevronRight, Printer, Download, Upload, FileJson, AlertTriangle, BarChart3, FileText, FileType, Search, ArrowUp, ArrowDown, CheckCircle, FolderOpen, Building, FileUp, FileDown } from 'lucide-react';
 import { engToKor } from './hangeul.js'; 
 
 export default function App() {
@@ -9,9 +9,13 @@ export default function App() {
 
   const [items, setItems] = useState([]);
   const [logs, setLogs] = useState({});
+  const [agencies, setAgencies] = useState([]);
+
+  // 탭 순환 자동완성용 State
+  const [matchedAgencies, setMatchedAgencies] = useState([]); 
+  const [matchIndex, setMatchIndex] = useState(-1); 
 
   const [isCapsLockOn, setIsCapsLockOn] = useState(false);
-  // 🔥 [추가] 팝업 대신 화면에 에러를 띄우기 위한 상태
   const [inputError, setInputError] = useState('');
 
   useEffect(() => {
@@ -23,6 +27,8 @@ export default function App() {
           if (data) {
             if (data.items) setItems(data.items);
             if (data.logs) setLogs(data.logs);
+            if (data.agencies) setAgencies(data.agencies);
+            console.log("📂 내 문서 파일에서 데이터 로드 완료!");
             loaded = true;
           }
         } catch (error) {
@@ -33,6 +39,8 @@ export default function App() {
         try {
           const savedItems = localStorage.getItem('inventory_items');
           const savedLogs = localStorage.getItem('inventory_logs');
+          const savedAgencies = localStorage.getItem('inventory_agencies'); 
+
           if (savedItems) setItems(JSON.parse(savedItems));
           else setItems([
             { id: 1, name: '락스 2L', isDeleted: false },
@@ -41,7 +49,9 @@ export default function App() {
             { id: 4, name: '수세미', isDeleted: false },
             { id: 5, name: '고무장갑', isDeleted: false },
           ]);
+          
           if (savedLogs) setLogs(JSON.parse(savedLogs));
+          if (savedAgencies) setAgencies(JSON.parse(savedAgencies)); 
         } catch(e) { console.error("초기화 실패", e); }
       }
     };
@@ -51,25 +61,29 @@ export default function App() {
   const saveDataToLocal = () => {
     localStorage.setItem('inventory_items', JSON.stringify(items));
     localStorage.setItem('inventory_logs', JSON.stringify(logs));
+    localStorage.setItem('inventory_agencies', JSON.stringify(agencies)); 
+
     if (window.electron) {
-      window.electron.saveData({ items, logs });
+      window.electron.saveData({ items, logs, agencies });
       setSaveStatus('저장됨');
       setTimeout(() => setSaveStatus(''), 2000);
     }
   };
 
   useEffect(() => {
-    if (items.length > 0 || Object.keys(logs).length > 0) {
+    if (items.length > 0 || Object.keys(logs).length > 0 || agencies.length > 0) {
       saveDataToLocal();
     }
-  }, [items, logs]);
+  }, [items, logs, agencies]);
 
   useEffect(() => {
     const handleEsc = (event) => {
       if (event.key === 'Escape') {
         setIsModalOpen(false);
         setConfirmModal({ isOpen: false, message: '', onConfirm: null });
-        setInputError(''); // 모달 닫을 때 에러 초기화
+        setInputError('');
+        setMatchedAgencies([]);
+        setMatchIndex(-1);
       }
     };
     window.addEventListener('keydown', handleEsc);
@@ -83,6 +97,8 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false);
   const dragCounter = useRef(0);
   const [selectedOrg, setSelectedOrg] = useState('ALL'); 
+  
+  const [newAgencyName, setNewAgencyName] = useState('');
 
   const getDaysInMonth = (date) => {
     const year = date.getFullYear();
@@ -202,13 +218,14 @@ export default function App() {
     if (!date) return;
     setSelectedDate(formatDateKey(date));
     setIsModalOpen(true);
-    setInputError(''); // 모달 열 때 에러 초기화
+    setInputError('');
+    setMatchedAgencies([]);
+    setMatchIndex(-1);
     const firstValidItem = items.find(i => !i.isDeleted);
     setNewItemData({ itemId: firstValidItem?.id || '', org: '', qty: '' });
   };
 
   const handleAddItem = () => {
-    // 🔥 [수정] 팝업창(alert) 삭제하고 에러 텍스트로 처리
     if (!newItemData.itemId) {
       setInputError("물품을 선택해주세요.");
       return;
@@ -218,7 +235,7 @@ export default function App() {
       return;
     }
     
-    setInputError(''); // 성공 시 에러 클리어
+    setInputError(''); 
 
     const newEntry = {
       id: Date.now(),
@@ -232,6 +249,8 @@ export default function App() {
     }));
     const firstValidItem = items.find(i => !i.isDeleted);
     setNewItemData({ itemId: firstValidItem?.id || '', org: '', qty: '' });
+    setMatchedAgencies([]); 
+    setMatchIndex(-1);
   };
 
   const checkCapsLock = (e) => {
@@ -242,9 +261,83 @@ export default function App() {
 
   const handleKeyDown = (e) => {
     checkCapsLock(e); 
-    if (e.key === 'Enter') {
+    
+    // Tab 키 & 매칭된 리스트가 있음
+    if (e.key === 'Tab' && matchedAgencies.length > 0) {
+      e.preventDefault(); 
+      
+      const nextIndex = (matchIndex + 1) % matchedAgencies.length; 
+      setMatchIndex(nextIndex);
+      
+      const nextAgency = matchedAgencies[nextIndex];
+      setNewItemData({ ...newItemData, org: nextAgency });
+    }
+    else if (e.key === 'Enter') {
       handleAddItem();
     }
+  };
+
+  // --- 기관 관리 로직 ---
+  const handleAddAgency = () => {
+    if (!newAgencyName.trim()) return;
+    if (agencies.includes(newAgencyName.trim())) {
+      alert("이미 등록된 기관입니다.");
+      return;
+    }
+    setAgencies([...agencies, newAgencyName.trim()]);
+    setNewAgencyName('');
+  };
+
+  const handleDeleteAgency = (targetName) => {
+    if (confirm(`'${targetName}'을(를) 목록에서 삭제하시겠습니까?`)) {
+      setAgencies(agencies.filter(name => name !== targetName));
+    }
+  };
+
+  // 기관 목록 내보내기 (TXT)
+  const handleExportAgenciesTxt = () => {
+    if (agencies.length === 0) {
+      alert("내보낼 기관 목록이 없습니다.");
+      return;
+    }
+    const content = agencies.join('\n');
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `기관목록_${new Date().toISOString().slice(0,10)}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // 🔥 [수정됨] 기관 목록 불러오기 (TXT) - 덮어쓰기 로직
+  const handleImportAgenciesTxt = (file) => {
+    if (!file) return;
+    
+    // 확인 절차 추가
+    if (!confirm("주의: 불러오는 파일의 내용으로 현재 기관 목록을 완전히 덮어씁니다.\n기존 목록은 삭제됩니다. 진행하시겠습니까?")) {
+      return; // 취소 누르면 중단
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target.result;
+      const lines = content.split('\n')
+        .map(line => line.trim()) // 공백 제거
+        .filter(line => line.length > 0); // 빈 줄 제거
+      
+      // 중복 제거
+      const uniqueLines = [...new Set(lines)];
+      
+      if (uniqueLines.length === 0) {
+        alert("파일에 유효한 내용이 없습니다.");
+      } else {
+        setAgencies(uniqueLines); // 🔥 덮어쓰기 (기존 목록 삭제됨)
+        alert(`${uniqueLines.length}개의 기관으로 목록이 교체되었습니다.`);
+      }
+    };
+    reader.readAsText(file);
   };
 
   const handleDeleteEntry = (dateKey, entryId) => {
@@ -304,6 +397,7 @@ export default function App() {
             onConfirm: () => {
               setLogs(data.logs);
               setItems(data.items);
+              if (data.agencies) setAgencies(data.agencies);
               setActiveTab('calendar');
               setConfirmModal({ isOpen: false, message: '', onConfirm: null });
             }
@@ -321,7 +415,7 @@ export default function App() {
   const handlePrint = () => window.print();
   
   const handleDownloadData = () => {
-    const data = { logs: logs, items: items, exportDate: new Date().toISOString() };
+    const data = { logs: logs, items: items, agencies: agencies, exportDate: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -387,6 +481,9 @@ export default function App() {
             <button onClick={() => setActiveTab('items')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeTab === 'items' ? 'bg-white text-emerald-700' : 'bg-emerald-700 text-emerald-100 hover:bg-emerald-500'}`}>
               📦 품목 관리
             </button>
+            <button onClick={() => setActiveTab('agencies')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors flex items-center gap-1 ${activeTab === 'agencies' ? 'bg-white text-emerald-700' : 'bg-emerald-700 text-emerald-100 hover:bg-emerald-500'}`}>
+              <Building className="w-4 h-4" /> 기관 관리
+            </button>
             <button onClick={() => setActiveTab('data')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeTab === 'data' ? 'bg-white text-emerald-700' : 'bg-emerald-700 text-emerald-100 hover:bg-emerald-500'}`}>
               💾 데이터 관리
             </button>
@@ -394,7 +491,7 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-hidden print:p-0 print:overflow-visible flex flex-col">
-          {activeTab !== 'data' && (
+          {activeTab !== 'data' && activeTab !== 'agencies' && (
             <div className="p-4 flex justify-between items-center bg-white rounded-t-xl border-b border-gray-200 no-print shrink-0">
               <div className="flex items-center gap-4">
                 <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))} className="p-1 hover:bg-gray-100 rounded-full"><ChevronLeft /></button>
@@ -537,6 +634,54 @@ export default function App() {
               </div>
             )}
 
+            {/* 🔥 기관 관리 탭 (TXT 파일 기능 + 덮어쓰기 로직 적용) */}
+            {activeTab === 'agencies' && (
+              <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-6 no-print h-full flex flex-col">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-lg font-bold flex items-center gap-2 shrink-0"><Building className="w-5 h-5 text-emerald-600" />기관 목록 관리</h2>
+                  
+                  {/* 🔥 파일 내보내기/불러오기 버튼 */}
+                  <div className="flex gap-2">
+                    <button onClick={handleExportAgenciesTxt} className="text-xs bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 hover:bg-gray-200">
+                      <FileDown className="w-3 h-3" /> 목록 내보내기
+                    </button>
+                    <label className="text-xs bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 hover:bg-gray-200 cursor-pointer">
+                      <FileUp className="w-3 h-3" /> 목록 불러오기
+                      <input type="file" accept=".txt" className="hidden" onChange={(e) => handleImportAgenciesTxt(e.target.files[0])} />
+                    </label>
+                  </div>
+                </div>
+
+                <p className="text-sm text-gray-500 mb-4">자주 사용하는 기관명을 등록해두면, 기록할 때 자동완성 기능을 사용할 수 있습니다.</p>
+                 <div className="flex gap-2 mb-6 shrink-0">
+                  <input 
+                    type="text" 
+                    value={newAgencyName} 
+                    onChange={(e) => {
+                        const converted = engToKor(e.target.value);
+                        setNewAgencyName(converted);
+                    }} 
+                    placeholder="새 기관명 입력 (예: 가덕복지회관)" 
+                    className="flex-1 border border-gray-300 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-emerald-500" 
+                    onKeyPress={(e) => e.key === 'Enter' && handleAddAgency()} 
+                  />
+                  <button onClick={handleAddAgency} className="bg-emerald-600 text-white px-6 py-2 rounded-lg font-bold flex items-center gap-2"><Plus className="w-4 h-4" /> 추가</button>
+                </div>
+                <div className="flex-1 overflow-y-auto pb-24 space-y-2 pr-1">
+                  {agencies.length > 0 ? (
+                    agencies.map((agency, index) => (
+                      <div key={index} className="flex justify-between items-center p-3 bg-white border border-gray-100 rounded-lg shadow-sm hover:border-emerald-200 transition-colors">
+                        <span className="font-medium text-gray-700">{agency}</span>
+                        <button onClick={() => handleDeleteAgency(agency)} className="text-red-400 hover:text-red-600 p-2 rounded-full hover:bg-red-50" title="삭제"><Trash2 className="w-4 h-4" /></button>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center text-gray-400 py-10">등록된 기관이 없습니다.</div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {activeTab === 'data' && (
               <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-6 no-print h-full overflow-y-auto">
                 <h2 className="text-lg font-bold mb-6 flex items-center gap-2"><Save className="w-5 h-5 text-emerald-600" />데이터 저장 및 불러오기</h2>
@@ -584,7 +729,6 @@ export default function App() {
               <div className="space-y-3 border-t pt-4">
                 <h4 className="text-sm font-bold text-gray-700">새 항목 추가</h4>
                 
-                {/* 🔥 [추가] 에러 메시지 표시 영역 */}
                 {inputError && (
                   <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded text-sm font-bold mb-2 flex items-center gap-2 animate-pulse">
                     <AlertTriangle className="w-4 h-4" /> {inputError}
@@ -593,12 +737,19 @@ export default function App() {
 
                 <div><label className="block text-xs font-bold text-gray-500 mb-1">물품 선택</label><div className="relative"><select value={newItemData.itemId} onChange={(e) => setNewItemData({...newItemData, itemId: e.target.value})} className="w-full border border-gray-300 rounded-lg pl-3 pr-8 py-2 appearance-none focus:ring-2 focus:ring-emerald-500 bg-white">{items.filter(item => !item.isDeleted).map(item => (<option key={item.id} value={item.id}>{item.name}</option>))}</select><div className="absolute right-3 top-2.5 pointer-events-none text-gray-500">▼</div></div></div>
                 <div className="grid grid-cols-3 gap-2">
-                  <div className="col-span-2">
-                    <label className="block text-xs font-bold text-gray-500 mb-1">기관 이름</label>
+                  <div className="col-span-2 relative">
+                    <label className="block text-xs font-bold text-gray-500 mb-1">
+                      기관 이름
+                      {/* 🔥 순환하는 자동완성 추천 문구 표시 */}
+                      {matchedAgencies.length > 0 && matchIndex >= 0 && (
+                        <span className="ml-2 text-xs text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded">
+                          💡 Tab: {matchedAgencies[matchIndex]} ({matchIndex + 1}/{matchedAgencies.length})
+                        </span>
+                      )}
+                    </label>
                     
-                    {/* 🔥 캡스락 경고 메시지 */}
                     {isCapsLockOn && (
-                      <span className="ml-2 text-xs bg-red-500 text-white px-2 py-0.5 rounded animate-pulse">
+                      <span className="absolute right-0 top-0 text-xs bg-red-500 text-white px-2 py-0.5 rounded animate-pulse">
                         ⚠️ Caps Lock 켜짐
                       </span>
                     )}
@@ -608,13 +759,31 @@ export default function App() {
                       placeholder="예: 낭성복지회관" 
                       value={newItemData.org} 
                       onChange={(e) => {
-                        checkCapsLock(e.nativeEvent); // 타이핑 중에도 상태 체크
-                        setInputError(''); // 타이핑하면 에러 클리어
+                        checkCapsLock(e.nativeEvent);
+                        setInputError('');
+                        
+                        // 1. 한글 변환
                         const converted = engToKor(e.target.value);
                         setNewItemData({...newItemData, org: converted});
+
+                        // 2. 🔥 부분 검색 로직 (includes)
+                        if (converted.length > 0 && agencies.length > 0) {
+                          // "매화" 입력 시 "가덕 매화공원"도 검색됨
+                          const matches = agencies.filter(agency => agency.includes(converted));
+                          if (matches.length > 0) {
+                            setMatchedAgencies(matches);
+                            setMatchIndex(0); 
+                          } else {
+                            setMatchedAgencies([]);
+                            setMatchIndex(-1);
+                          }
+                        } else {
+                          setMatchedAgencies([]);
+                          setMatchIndex(-1);
+                        }
                       }} 
                       onKeyDown={handleKeyDown} 
-                      onClick={(e) => checkCapsLock(e.nativeEvent)} // 클릭했을 때도 체크
+                      onClick={(e) => checkCapsLock(e.nativeEvent)} 
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500" 
                     />
                   </div>
@@ -626,16 +795,6 @@ export default function App() {
                 <button onClick={handleAddItem} className="w-full bg-emerald-600 text-white font-bold py-3 rounded-lg hover:bg-emerald-700 flex justify-center items-center gap-2 mt-2"><Save className="w-4 h-4" /> 입력하기</button>
               </div>
             </div>
-          </div>
-        </div>
-      )}
-
-      {confirmModal.isOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[120] p-4 no-print animate-in fade-in duration-200">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full transform scale-100">
-            <div className="flex items-center gap-3 mb-4 text-red-600"><AlertTriangle className="w-6 h-6" /><h3 className="font-bold text-lg">확인 필요</h3></div>
-            <p className="text-gray-600 mb-6">{confirmModal.message}</p>
-            <div className="flex justify-end gap-3"><button onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })} className="px-4 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold hover:bg-gray-300">취소</button><button onClick={confirmModal.onConfirm} className="px-4 py-2 rounded-lg bg-red-600 text-white font-bold hover:bg-red-700">확인</button></div>
           </div>
         </div>
       )}
