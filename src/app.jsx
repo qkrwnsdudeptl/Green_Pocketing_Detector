@@ -254,25 +254,29 @@ export default function App() {
   };
 
   const checkCapsLock = (e) => {
-    if (e.getModifierState) {
+    if (e && e.getModifierState) {
       setIsCapsLockOn(e.getModifierState('CapsLock'));
     }
   };
 
+  // 🔥 [수정] 윈도우 IME 가로채기 방지 및 탭 기능 안정화
   const handleKeyDown = (e) => {
-    checkCapsLock(e); 
+    checkCapsLock(e.nativeEvent || e); 
     
-    // Tab 키 & 매칭된 리스트가 있음
-    if (e.key === 'Tab' && matchedAgencies.length > 0) {
-      e.preventDefault(); 
+    // Tab 키 처리 (keyCode 9 포함하여 확실히 잡기)
+    if ((e.key === 'Tab' || e.keyCode === 9) && matchedAgencies.length > 0) {
+      e.preventDefault(); // 포커스 뺏김 방지
       
       const nextIndex = (matchIndex + 1) % matchedAgencies.length; 
       setMatchIndex(nextIndex);
       
       const nextAgency = matchedAgencies[nextIndex];
-      setNewItemData({ ...newItemData, org: nextAgency });
+      // 함수형 업데이트를 통해 이전 값을 안전하게 가져옴
+      setNewItemData(prev => ({ ...prev, org: nextAgency }));
     }
+    // Enter 키 처리 (IME 조합 중복 입력 방지 추가)
     else if (e.key === 'Enter') {
+      if (e.nativeEvent && e.nativeEvent.isComposing) return; // 한글 타이핑 중 엔터 먹히는 것 방어
       handleAddItem();
     }
   };
@@ -288,9 +292,10 @@ export default function App() {
     setNewAgencyName('');
   };
 
+  // 🔥 [수정] 함수형 업데이트 적용 (오래된 기억의 함정 방지)
   const handleDeleteAgency = (targetName) => {
     if (confirm(`'${targetName}'을(를) 목록에서 삭제하시겠습니까?`)) {
-      setAgencies(agencies.filter(name => name !== targetName));
+      setAgencies(prev => prev.filter(name => name !== targetName));
     }
   };
 
@@ -311,35 +316,34 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  // 🔥 [수정됨] 기관 목록 불러오기 (TXT) - 덮어쓰기 로직
+  // 기관 목록 불러오기 (TXT)
   const handleImportAgenciesTxt = (file) => {
     if (!file) return;
     
-    // 확인 절차 추가
     if (!confirm("주의: 불러오는 파일의 내용으로 현재 기관 목록을 완전히 덮어씁니다.\n기존 목록은 삭제됩니다. 진행하시겠습니까?")) {
-      return; // 취소 누르면 중단
+      return; 
     }
 
     const reader = new FileReader();
     reader.onload = (e) => {
       const content = e.target.result;
       const lines = content.split('\n')
-        .map(line => line.trim()) // 공백 제거
-        .filter(line => line.length > 0); // 빈 줄 제거
+        .map(line => line.trim()) 
+        .filter(line => line.length > 0); 
       
-      // 중복 제거
       const uniqueLines = [...new Set(lines)];
       
       if (uniqueLines.length === 0) {
         alert("파일에 유효한 내용이 없습니다.");
       } else {
-        setAgencies(uniqueLines); // 🔥 덮어쓰기 (기존 목록 삭제됨)
+        setAgencies(uniqueLines); 
         alert(`${uniqueLines.length}개의 기관으로 목록이 교체되었습니다.`);
       }
     };
     reader.readAsText(file);
   };
 
+  // 달력 내역 지우기
   const handleDeleteEntry = (dateKey, entryId) => {
     setConfirmModal({
       isOpen: true,
@@ -351,12 +355,14 @@ export default function App() {
     });
   };
 
+  // 🔥 [수정] 물품 목록 삭제 (함수형 업데이트 적용)
   const handleDeleteItem = (id) => {
     setConfirmModal({
       isOpen: true,
       message: '목록에서 삭제하시겠습니까? (기존 대장 기록은 유지됩니다)',
       onConfirm: () => {
-        setItems(items.map(i => i.id === id ? { ...i, isDeleted: true } : i));
+        // prevItems를 사용해 가장 최신 목록을 기준으로 삭제 처리
+        setItems(prevItems => prevItems.map(i => i.id === id ? { ...i, isDeleted: true } : i));
         setConfirmModal({ isOpen: false, message: '', onConfirm: null });
       }
     });
@@ -634,13 +640,12 @@ export default function App() {
               </div>
             )}
 
-            {/* 🔥 기관 관리 탭 (TXT 파일 기능 + 덮어쓰기 로직 적용) */}
+            {/* 기관 관리 탭 */}
             {activeTab === 'agencies' && (
               <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-6 no-print h-full flex flex-col">
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-lg font-bold flex items-center gap-2 shrink-0"><Building className="w-5 h-5 text-emerald-600" />기관 목록 관리</h2>
                   
-                  {/* 🔥 파일 내보내기/불러오기 버튼 */}
                   <div className="flex gap-2">
                     <button onClick={handleExportAgenciesTxt} className="text-xs bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 hover:bg-gray-200">
                       <FileDown className="w-3 h-3" /> 목록 내보내기
@@ -686,7 +691,6 @@ export default function App() {
               <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-6 no-print h-full overflow-y-auto">
                 <h2 className="text-lg font-bold mb-6 flex items-center gap-2"><Save className="w-5 h-5 text-emerald-600" />데이터 저장 및 불러오기</h2>
                 <div className="grid gap-6">
-                  {/* 🔥 수동 저장 및 폴더 열기 버튼 */}
                   <div className="p-4 border border-blue-100 bg-blue-50 rounded-lg">
                     <h3 className="font-bold text-blue-800 mb-2 flex items-center gap-2"><Save className="w-4 h-4" /> 지금 즉시 저장하기</h3>
                     <p className="text-sm text-blue-600 mb-4">자동으로 저장되지만, 확실하게 저장하고 싶다면 이 버튼을 누르세요.<br/>내 컴퓨터(문서/GreenVillageInventory)에 저장됩니다.</p>
@@ -740,7 +744,6 @@ export default function App() {
                   <div className="col-span-2 relative">
                     <label className="block text-xs font-bold text-gray-500 mb-1">
                       기관 이름
-                      {/* 🔥 순환하는 자동완성 추천 문구 표시 */}
                       {matchedAgencies.length > 0 && matchIndex >= 0 && (
                         <span className="ml-2 text-xs text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded">
                           💡 Tab: {matchedAgencies[matchIndex]} ({matchIndex + 1}/{matchedAgencies.length})
@@ -762,13 +765,10 @@ export default function App() {
                         checkCapsLock(e.nativeEvent);
                         setInputError('');
                         
-                        // 1. 한글 변환
                         const converted = engToKor(e.target.value);
-                        setNewItemData({...newItemData, org: converted});
+                        setNewItemData(prev => ({...prev, org: converted})); // 🔥 최신 상태 가져와서 업데이트 (안전)
 
-                        // 2. 🔥 부분 검색 로직 (includes)
                         if (converted.length > 0 && agencies.length > 0) {
-                          // "매화" 입력 시 "가덕 매화공원"도 검색됨
                           const matches = agencies.filter(agency => agency.includes(converted));
                           if (matches.length > 0) {
                             setMatchedAgencies(matches);
@@ -789,12 +789,22 @@ export default function App() {
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-500 mb-1">수량</label>
-                    <input type="number" placeholder="0" value={newItemData.qty} onChange={(e) => { setInputError(''); setNewItemData({...newItemData, qty: e.target.value}); }} onKeyDown={handleKeyDown} className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500" />
+                    <input type="number" placeholder="0" value={newItemData.qty} onChange={(e) => { setInputError(''); setNewItemData(prev => ({...prev, qty: e.target.value})); }} onKeyDown={handleKeyDown} className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500" />
                   </div>
                 </div>
                 <button onClick={handleAddItem} className="w-full bg-emerald-600 text-white font-bold py-3 rounded-lg hover:bg-emerald-700 flex justify-center items-center gap-2 mt-2"><Save className="w-4 h-4" /> 입력하기</button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[120] p-4 no-print animate-in fade-in duration-200">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full transform scale-100">
+            <div className="flex items-center gap-3 mb-4 text-red-600"><AlertTriangle className="w-6 h-6" /><h3 className="font-bold text-lg">확인 필요</h3></div>
+            <p className="text-gray-600 mb-6">{confirmModal.message}</p>
+            <div className="flex justify-end gap-3"><button onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })} className="px-4 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold hover:bg-gray-300">취소</button><button onClick={confirmModal.onConfirm} className="px-4 py-2 rounded-lg bg-red-600 text-white font-bold hover:bg-red-700">확인</button></div>
           </div>
         </div>
       )}
