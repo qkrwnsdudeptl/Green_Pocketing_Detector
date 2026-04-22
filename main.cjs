@@ -36,13 +36,13 @@ app.on('window-all-closed', () => {
 });
 
 // --- 파일 저장 경로 설정 ---
-// 내 문서 > GreenVillageInventory 폴더
-const saveDir = path.join(app.getPath('documents'), 'GreenVillageInventory');
+// 🔥 변경됨: 네트워크 공유 폴더 경로 지정 (자바스크립트에서는 역슬래시(\)를 두 번(\\) 써야 인식합니다)
+const saveDir = '\\\\192.168.100.235\\공용폴더\\00.청남시니어클럽(2026년)\\02. 사업단\\01. 노인공익활동\\DB_NOT_DELETE';
 const saveFile = path.join(saveDir, 'data.json');
 
-// 폴더가 없으면 생성
+// 폴더가 없으면 생성 (깊은 경로까지 한 번에 만들 수 있도록 recursive 옵션 추가)
 if (!fs.existsSync(saveDir)) {
-  fs.mkdirSync(saveDir);
+  fs.mkdirSync(saveDir, { recursive: true });
 }
 
 // 1. 데이터 불러오기
@@ -75,7 +75,7 @@ ipcMain.on('open-folder', () => {
     shell.openPath(saveDir);
   } else {
     // 만약 폴더가 없다면 새로 만들고 열기
-    fs.mkdirSync(saveDir);
+    fs.mkdirSync(saveDir, { recursive: true });
     shell.openPath(saveDir);
   }
 });
