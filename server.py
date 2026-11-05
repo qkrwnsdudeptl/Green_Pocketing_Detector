@@ -3,10 +3,12 @@ import ipaddress
 import json
 import mimetypes
 import re
+import socket
 import sqlite3
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from urllib.parse import unquote, urlsplit
 
 from inventory_store import Conflict, InventoryStore
@@ -16,7 +18,9 @@ ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
 CONFIG = ROOT / "server.local.json"
 API = "/api/v1/inventory"
+SQLITE_API = f"{API}/sqlite"
 MAX_BODY = 16 * 1024 * 1024
+MAX_SQLITE = 64 * 1024 * 1024
 PRIVATE_NETWORKS = tuple(ipaddress.ip_network(value) for value in (
     "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"
 ))
@@ -55,6 +59,12 @@ class InventoryServer(ThreadingHTTPServer):
         self.authorities = authorities
         super().__init__(("0.0.0.0" if networks else "127.0.0.1", port), Handler)
 
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.allow_reuse_address = False
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
 
 class Handler(BaseHTTPRequestHandler):
     timeout = 15
@@ -63,13 +73,15 @@ class Handler(BaseHTTPRequestHandler):
         if code != "-" and int(code) >= 400:
             super().log_request(code, size)
 
-    def send_bytes(self, status, body, content_type, *, head=False):
+    def send_bytes(self, status, body, content_type, *, head=False, filename=None):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
+        if filename:
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.end_headers()
         if not head:
             self.wfile.write(body)
@@ -113,6 +125,18 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_json(HTTPStatus.OK, snapshot, head=head)
             return
+        if path == SQLITE_API:
+            try:
+                with TemporaryDirectory() as folder:
+                    backup = Path(folder) / "inventory.sqlite3"
+                    self.server.store.backup(backup)
+                    body = backup.read_bytes()
+            except (sqlite3.Error, OSError) as error:
+                self.database_error(error, head=head)
+            else:
+                self.send_bytes(HTTPStatus.OK, body, "application/vnd.sqlite3", head=head,
+                                filename="green-village-inventory.sqlite3")
+            return
         static_path = (DIST / (unquote(path).lstrip("/") or "index.html")).resolve()
         if static_path.is_relative_to(DIST) and static_path.is_file():
             content_type = mimetypes.guess_type(static_path)[0] or "application/octet-stream"
@@ -145,6 +169,39 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeError, RecursionError) as error:
             self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
         except sqlite3.Error as error:
+            self.database_error(error)
+        else:
+            self.send_json(HTTPStatus.OK, {"revision": revision})
+
+    def do_POST(self):
+        if not self.allowed():
+            return
+        if urlsplit(self.path).path != SQLITE_API:
+            self.send_json(HTTPStatus.NOT_FOUND, {"error": "API를 찾을 수 없습니다."})
+            return
+        if self.headers.get_content_type() != "application/vnd.sqlite3":
+            self.send_json(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "SQLite 파일이 필요합니다."})
+            return
+        try:
+            revision = int(self.headers.get("X-Inventory-Revision", ""))
+            length = int(self.headers.get("Content-Length", "0"))
+            if length > MAX_SQLITE:
+                self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "SQLite 파일은 64MB까지 올릴 수 있습니다."})
+                return
+            if revision < 0 or length <= 0:
+                raise ValueError("파일과 현재 대장 버전을 확인하세요.")
+            body = self.rfile.read(length)
+            if len(body) != length or not body.startswith(b"SQLite format 3\x00"):
+                raise ValueError("올바른 SQLite 파일이 아닙니다.")
+            with TemporaryDirectory() as folder:
+                backup = Path(folder) / "restore.sqlite3"
+                backup.write_bytes(body)
+                revision = self.server.store.restore(revision, backup)
+        except Conflict:
+            self.send_json(HTTPStatus.CONFLICT, {"error": "다른 사용자가 먼저 저장했습니다."})
+        except (ValueError, OverflowError) as error:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+        except (sqlite3.Error, OSError) as error:
             self.database_error(error)
         else:
             self.send_json(HTTPStatus.OK, {"revision": revision})

@@ -3,10 +3,11 @@ import { Calendar, Package, Plus, Trash2, Save, X, ChevronLeft, ChevronRight, Pr
 import { engToKor } from './hangeul.js'; 
 
 const inventoryUrl = '/api/v1/inventory';
+const sqliteUrl = `${inventoryUrl}/sqlite`;
 const nextId = (records) => records.reduce((next, record) => Math.max(next, record.id + 1), Date.now());
 
-async function inventoryRequest(options) {
-  const response = await fetch(inventoryUrl, options);
+async function inventoryRequest(options, url = inventoryUrl) {
+  const response = await fetch(url, options);
   const result = await response.json();
   if (!response.ok) {
     throw Object.assign(new Error(result.error || '서버 요청에 실패했습니다.'), { status: response.status });
@@ -81,7 +82,7 @@ export default function App() {
     };
   }, [refresh, isModalOpen, newItemName, newAgencyName]);
 
-  const safeSave = async (update, expectedRevision) => {
+  const safeSave = async (update, expectedRevision, sqliteFile) => {
     if (saving.current) return false;
     saving.current = true;
     setSaveStatus('');
@@ -95,15 +96,25 @@ export default function App() {
       } else {
         const base = snapshot.current;
         if (!base) throw new Error('서버에서 데이터를 불러온 뒤 다시 시도하세요.');
-        const data = update(base.data);
-        const { revision } = await inventoryRequest({
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ revision: expectedRevision ?? base.revision, data }),
-        });
-        showSnapshot({ revision, data });
+        const expected = expectedRevision ?? base.revision;
+        if (sqliteFile) {
+          await inventoryRequest({
+            method: 'POST',
+            headers: { 'Content-Type': 'application/vnd.sqlite3', 'X-Inventory-Revision': String(expected) },
+            body: sqliteFile,
+          }, sqliteUrl);
+          await refresh();
+        } else {
+          const data = update(base.data);
+          const { revision } = await inventoryRequest({
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ revision: expected, data }),
+          });
+          showSnapshot({ revision, data });
+        }
       }
-      setSaveStatus('동기화 완료');
+      setSaveStatus(sqliteFile ? 'SQLite 복원 완료' : '동기화 완료');
       return true;
     } catch (error) {
       if (error.status === 409) await refresh();
@@ -352,6 +363,23 @@ export default function App() {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a'); link.href = url; link.download = `물품대장_백업_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
+  };
+
+  const handleRestoreSqlite = (file) => {
+    if (!file) return;
+    const revision = snapshot.current?.revision;
+    if (revision === undefined) {
+      setServerError('현재 대장을 불러온 뒤 다시 시도하세요.');
+      return;
+    }
+    setConfirmModal({
+      isOpen: true,
+      message: `“${file.name}” 파일로 현재 서버의 물품, 기관, 기록을 모두 교체할까요?`,
+      onConfirm: async () => {
+        await safeSave(null, revision, file);
+        setConfirmModal({ isOpen: false, message: '', onConfirm: null });
+      },
+    });
   };
 
   const today = new Date();
@@ -631,6 +659,20 @@ export default function App() {
                     </div>
                   </div>
 
+                  {!electron && (
+                    <div className="p-4 border border-emerald-100 bg-emerald-50 rounded-lg">
+                      <h3 className="font-bold text-emerald-800 mb-2">서버 이전용 SQLite 백업</h3>
+                      <p className="text-sm text-emerald-600 mb-4">기존 서버에서 파일을 내려받고 새 서버에서 불러오세요. 복원하면 새 서버의 현재 대장 전체가 교체됩니다.</p>
+                      <a href={sqliteUrl} className="inline-flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-emerald-700">
+                        <Download className="w-4 h-4" /> SQLite 백업 다운로드
+                      </a>
+                      <label className="block mt-4 text-sm font-bold text-emerald-800">
+                        SQLite 파일 불러오기
+                        <input type="file" accept=".sqlite3,.sqlite,.db" className="block mt-2 w-full"
+                          onChange={(e) => { handleRestoreSqlite(e.target.files[0]); e.target.value = ''; }} />
+                      </label>
+                    </div>
+                  )}
                   <div className="p-4 border border-emerald-100 bg-emerald-50 rounded-lg">
                     <h3 className="font-bold text-emerald-800 mb-2 flex items-center gap-2"><Download className="w-4 h-4" /> 내 컴퓨터에 로컬 백업 파일 다운로드</h3>
                     <p className="text-sm text-emerald-600 mb-4">현재 기록된 전체 데이터를 별도의 로컬 백업 파일(.json)로 내려받습니다.</p>

@@ -96,7 +96,12 @@ class InventoryStore:
         return db
 
     def snapshot(self):
-        with closing(self.connect()) as db, db:
+        with closing(self.connect()) as db:
+            return self.read_snapshot(db)
+
+    @staticmethod
+    def read_snapshot(db):
+        with db:
             db.execute("BEGIN")
             revision = db.execute("SELECT revision FROM inventory_revision").fetchone()[0]
             items = [
@@ -112,6 +117,27 @@ class InventoryStore:
             ):
                 logs[day].append({"id": entry_id, "itemId": item_id, "org": org, "qty": qty})
             return {"revision": revision, "data": {"items": items, "logs": logs, "agencies": agencies}}
+
+    def backup(self, path):
+        with closing(self.connect()) as source, closing(sqlite3.connect(path)) as target:
+            source.backup(target)
+
+    def restore(self, revision, path):
+        try:
+            with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as source:
+                source.execute("PRAGMA trusted_schema = OFF")
+                tables = {name for (name,) in source.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )}
+                expected = {"inventory_revision", "items", "agencies", "log_days", "ledger_entries"}
+                if not expected.issubset(tables) or source.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                    raise ValueError("물품대장 SQLite 파일을 확인하세요.")
+                if source.execute("PRAGMA foreign_key_check").fetchone():
+                    raise ValueError("SQLite 기록의 참조가 올바르지 않습니다.")
+                snapshot = self.read_snapshot(source)
+        except (sqlite3.Error, KeyError, TypeError) as error:
+            raise ValueError("물품대장 SQLite 파일을 읽을 수 없습니다.") from error
+        return self.replace(revision, snapshot["data"])
 
     def replace(self, revision, data):
         if type(revision) is not int or revision < 0:
