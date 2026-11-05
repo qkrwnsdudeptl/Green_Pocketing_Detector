@@ -365,6 +365,32 @@ export default function App() {
     const link = document.createElement('a'); link.href = url; link.download = `물품대장_백업_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
 
+  const downloadStocktake = () => {
+    const escapeRtf = (text) => text.split('').map((char) => {
+      const code = char.charCodeAt(0);
+      if (code < 32) return ' ';
+      if (code > 126) return `\\u${code > 32767 ? code - 65536 : code}?`;
+      return '\\{}'.includes(char) ? `\\${char}` : char;
+    }).join('');
+    const row = (cells) => {
+      const borders = '\\clbrdrt\\brdrs\\clbrdrl\\brdrs\\clbrdrb\\brdrs\\clbrdrr\\brdrs';
+      const layout = [750, 5400, 6900, 9500].map((edge) => `${borders}\\cellx${edge}`).join('');
+      return `\\trowd\\trgaph100\\trrh380${layout}\n\\intbl ${cells.map(escapeRtf).join('\\cell ')}\\cell\\row\n`;
+    };
+    const rows = items.filter((item) => !item.isDeleted)
+      .map((item, index) => row([String(index + 1), item.name, '', '']));
+    const content = `{\\rtf1\\ansi\\uc1\\paperw11906\\paperh16838\\margl1100\\margr1100{\\fonttbl{\\f0 Malgun Gothic;}}\\f0\\fs22\n`
+      + `\\b\\fs32 ${escapeRtf('재고조사표')}\\b0\\fs22\\par\n`
+      + `${escapeRtf('조사일: __________________    조사자: __________________')}\\par\\par\n`
+      + row(['번호', '품목명', '실사 수량', '비고']) + rows.join('') + '}';
+    const url = URL.createObjectURL(new Blob([content], { type: 'application/rtf' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = '재고조사표.rtf';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   const handleRestoreSqlite = (file) => {
     if (!file) return;
     const revision = snapshot.current?.revision;
@@ -643,6 +669,9 @@ export default function App() {
               <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-6 no-print h-full overflow-y-auto">
                 <h2 className="text-lg font-bold mb-6 flex items-center gap-2"><Save className="w-5 h-5 text-emerald-600" />데이터 저장 및 불러오기</h2>
                 <div className="grid gap-6">
+                  <button type="button" onClick={downloadStocktake} className="w-fit bg-blue-600 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2">
+                    <FileType className="w-4 h-4" /> 재고조사표 Word 다운로드
+                  </button>
                   <div className="p-4 border border-blue-100 bg-blue-50 rounded-lg">
                     <h3 className="font-bold text-blue-800 mb-2 flex items-center gap-2"><RefreshCw className="w-4 h-4" /> 수동 동기화 및 덮어쓰기</h3>
                     {/* 🔥 문구 수정됨 */}
