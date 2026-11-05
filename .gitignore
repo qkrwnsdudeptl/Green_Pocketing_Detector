@@ -15,6 +15,13 @@ release/
 *.exe
 .DS_Store
 
+# Local inventory server
+runtime/
+server.local.json
+*.sqlite3
+*.sqlite3-*
+__pycache__/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

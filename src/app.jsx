@@ -1,11 +1,27 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Calendar, Package, Plus, Trash2, Save, X, ChevronLeft, ChevronRight, Printer, Download, Upload, FileJson, AlertTriangle, BarChart3, FileText, FileType, Search, ArrowUp, ArrowDown, CheckCircle, FolderOpen, Building, FileUp, FileDown, RefreshCw } from 'lucide-react';
 import { engToKor } from './hangeul.js'; 
+
+const inventoryUrl = '/api/v1/inventory';
+const nextId = (records) => records.reduce((next, record) => Math.max(next, record.id + 1), Date.now());
+
+async function inventoryRequest(options) {
+  const response = await fetch(inventoryUrl, options);
+  const result = await response.json();
+  if (!response.ok) {
+    throw Object.assign(new Error(result.error || '서버 요청에 실패했습니다.'), { status: response.status });
+  }
+  return result;
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('calendar'); 
   const [currentDate, setCurrentDate] = useState(new Date()); 
   const [saveStatus, setSaveStatus] = useState(''); 
+  const [serverError, setServerError] = useState('');
+  const snapshot = useRef(null);
+  const saving = useRef(false);
+  const electron = window.electron;
 
   const [items, setItems] = useState([]);
   const [logs, setLogs] = useState({});
@@ -22,77 +38,83 @@ export default function App() {
   const [newItemName, setNewItemName] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // 1. 초기 데이터 로드
-  useEffect(() => {
-    const initData = async () => {
-      let loaded = false;
-      if (window.electron) {
-        try {
-          const data = await window.electron.loadData();
-          if (data) {
-            if (data.items) setItems(data.items);
-            if (data.logs) setLogs(data.logs);
-            if (data.agencies) setAgencies(data.agencies);
-            loaded = true;
-          }
-        } catch (error) { console.error("파일 불러오기 실패:", error); }
-      }
-      if (!loaded) {
-        // 웹 스토리지 폴백 (생략)
-        const savedItems = localStorage.getItem('inventory_items');
-        if (savedItems) setItems(JSON.parse(savedItems));
-      }
-    };
-    initData();
+  const showData = useCallback((data) => {
+    setItems(data.items || []);
+    setLogs(data.logs || {});
+    setAgencies(data.agencies || []);
   }, []);
 
-  // 🔥 [신규 1] 안전한 저장 함수 (Fetch -> Merge -> Save)
-  // 다른 PC의 데이터를 덮어씌우지 않기 위해 저장 직전에 최신 파일을 읽어옵니다.
-  const safeSave = async (updaterFn) => {
-    if (window.electron) {
-      try {
-        const latestData = (await window.electron.loadData()) || { items: [], logs: {}, agencies: [] };
-        const mergedData = updaterFn(latestData); // 최신 데이터에 내 작업 병합
-        
-        window.electron.saveData(mergedData); // 병합된 결과만 덮어쓰기
-        
-        setItems(mergedData.items || []);
-        setLogs(mergedData.logs || {});
-        setAgencies(mergedData.agencies || []);
-        
-        setSaveStatus('동기화 완료');
-        setTimeout(() => setSaveStatus(''), 2000);
-      } catch(e) {
-        console.error('Safe Save Error:', e);
+  const showSnapshot = useCallback((next) => {
+    if (snapshot.current && next.revision <= snapshot.current.revision) return;
+    snapshot.current = next;
+    showData(next.data);
+  }, [showData]);
+
+  const refresh = useCallback(async (signal) => {
+    try {
+      if (electron) {
+        const data = await electron.loadData();
+        if (data && !signal?.aborted) showData(data);
+      } else {
+        showSnapshot(await inventoryRequest({ signal }));
       }
-    } else {
-      // 웹 스토리지 용 (로컬)
-      setSaveStatus('웹에 임시 저장됨');
-      setTimeout(() => setSaveStatus(''), 2000);
+      if (!signal?.aborted) setServerError('');
+    } catch {
+      if (!signal?.aborted) setServerError('물품대장을 불러오지 못했습니다. 서버 연결을 확인하세요.');
+    }
+  }, [electron, showData, showSnapshot]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    refresh(controller.signal);
+    return () => controller.abort();
+  }, [refresh]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = setInterval(() => {
+      if (!saving.current && !isModalOpen && !newItemName && !newAgencyName) refresh(controller.signal);
+    }, 5000);
+    return () => {
+      clearInterval(timer);
+      controller.abort();
+    };
+  }, [refresh, isModalOpen, newItemName, newAgencyName]);
+
+  const safeSave = async (update, expectedRevision) => {
+    if (saving.current) return false;
+    saving.current = true;
+    setSaveStatus('');
+    setServerError('');
+    try {
+      if (electron) {
+        const latest = await electron.loadData() || { items: [], logs: {}, agencies: [] };
+        const data = update(latest);
+        electron.saveData(data);
+        showData(data);
+      } else {
+        const base = snapshot.current;
+        if (!base) throw new Error('서버에서 데이터를 불러온 뒤 다시 시도하세요.');
+        const data = update(base.data);
+        const { revision } = await inventoryRequest({
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ revision: expectedRevision ?? base.revision, data }),
+        });
+        showSnapshot({ revision, data });
+      }
+      setSaveStatus('동기화 완료');
+      return true;
+    } catch (error) {
+      if (error.status === 409) await refresh();
+      setServerError(error.status === 409
+        ? '다른 사용자가 먼저 저장했습니다. 최신 내용을 확인하고 다시 시도하세요.'
+        : `저장 실패: ${error.message}`);
+      return false;
+    } finally {
+      saving.current = false;
     }
   };
-
-  // 🔥 [신규 2] 5초 주기 백그라운드 동기화
-  useEffect(() => {
-    if (!window.electron) return;
-
-    const fetchInterval = setInterval(async () => {
-      // 사용자가 팝업을 열고 있거나, 글씨를 치고 있을 때는 방해하지 않음 (데이터 날림 방지)
-      if (!isModalOpen && !newItemName && !newAgencyName) {
-        try {
-          const data = await window.electron.loadData();
-          if (data) {
-            // 변경사항이 있을 때만 화면 업데이트 (화면 깜빡임 방지)
-            setItems(prev => JSON.stringify(prev) !== JSON.stringify(data.items) ? data.items : prev);
-            setLogs(prev => JSON.stringify(prev) !== JSON.stringify(data.logs) ? data.logs : prev);
-            setAgencies(prev => JSON.stringify(prev) !== JSON.stringify(data.agencies) ? data.agencies : prev);
-          }
-        } catch (e) { console.error(e); }
-      }
-    }, 5000); // 5초 주기
-
-    return () => clearInterval(fetchInterval);
-  }, [isModalOpen, newItemName, newAgencyName]); // 입력 상태가 바뀔 때마다 주기 재설정
 
   // ESC 키
   useEffect(() => {
@@ -145,24 +167,30 @@ export default function App() {
   };
 
   // 🔥 [수정] 달력 기록 추가 시 (Safe Save 적용)
-  const handleAddItem = () => {
+  const handleAddItem = async () => {
     if (!newItemData.itemId) { setInputError("물품을 선택해주세요."); return; }
     if (!newItemData.qty || Number(newItemData.qty) <= 0) { setInputError("수량은 1개 이상 입력해야 합니다!"); return; }
     setInputError(''); 
 
-    const newEntry = { id: Date.now(), itemId: Number(newItemData.itemId), org: newItemData.org, qty: Number(newItemData.qty) };
-    
-    // 🔥 데이터 덮어쓰기 방지: 최신 데이터 받아서 추가
-    safeSave((latestData) => {
+    const saved = await safeSave((latestData) => {
+      const itemId = Number(newItemData.itemId);
+      if (!latestData.items.some((item) => item.id === itemId && !item.isDeleted)) {
+        throw new Error('목록에 있는 물품을 다시 선택하세요.');
+      }
       const currentLogs = latestData.logs || {};
+      const entries = currentLogs[selectedDate] || [];
+      const newEntry = { id: nextId(entries), itemId, org: newItemData.org, qty: Number(newItemData.qty) };
       return {
         ...latestData,
-        logs: { ...currentLogs, [selectedDate]: [...(currentLogs[selectedDate] || []), newEntry] }
+        logs: { ...currentLogs, [selectedDate]: [...entries, newEntry] }
       };
     });
+    if (!saved) return;
 
     const firstValidItem = items.find(i => !i.isDeleted);
-    setNewItemData({ itemId: firstValidItem?.id || '', org: '', qty: '' });
+    setNewItemData((current) => current === newItemData
+      ? { itemId: firstValidItem?.id || '', org: '', qty: '' }
+      : current);
     setMatchedAgencies([]); 
     setMatchIndex(-1);
   };
@@ -188,28 +216,29 @@ export default function App() {
     setConfirmModal({
       isOpen: true,
       message: '정말 이 기록을 삭제하시겠습니까?',
-      onConfirm: () => {
-        safeSave((latestData) => {
+      onConfirm: async () => {
+        const saved = await safeSave((latestData) => {
           const currentLogs = latestData.logs || {};
           return {
             ...latestData,
             logs: { ...currentLogs, [dateKey]: (currentLogs[dateKey] || []).filter(e => e.id !== entryId) }
           };
         });
-        setConfirmModal({ isOpen: false, message: '', onConfirm: null });
+        if (saved) setConfirmModal({ isOpen: false, message: '', onConfirm: null });
       }
     });
   };
 
   // 🔥 [수정] 기관 추가 시 (Safe Save 적용)
-  const handleAddAgency = () => {
-    if (!newAgencyName.trim()) return;
-    if (agencies.includes(newAgencyName.trim())) { alert("이미 등록된 기관입니다."); return; }
-    
-    safeSave((latestData) => {
-      return { ...latestData, agencies: [...(latestData.agencies || []), newAgencyName.trim()] };
+  const handleAddAgency = async () => {
+    const name = newAgencyName.trim();
+    if (!name) return;
+    const saved = await safeSave((latestData) => {
+      const names = latestData.agencies || [];
+      if (names.includes(name)) throw new Error('이미 등록된 기관입니다.');
+      return { ...latestData, agencies: [...names, name] };
     });
-    setNewAgencyName('');
+    if (saved) setNewAgencyName((current) => current === newAgencyName ? '' : current);
   };
 
   // 🔥 [수정] 기관 삭제 시 (Safe Save 적용)
@@ -231,18 +260,19 @@ export default function App() {
 
   const handleImportAgenciesTxt = (file) => {
     if (!file) return;
+    const revision = snapshot.current?.revision;
     if (!confirm("주의: 불러오는 파일의 내용으로 현재 기관 목록을 완전히 덮어씁니다.\n기존 목록은 삭제됩니다. 진행하시겠습니까?")) return; 
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       const content = e.target.result;
       const lines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0); 
       const uniqueLines = [...new Set(lines)];
       
       if (uniqueLines.length === 0) alert("파일에 유효한 내용이 없습니다.");
       else {
-        safeSave((latestData) => ({ ...latestData, agencies: uniqueLines }));
-        alert(`${uniqueLines.length}개의 기관으로 목록이 교체되었습니다.`);
+        const saved = await safeSave((latestData) => ({ ...latestData, agencies: uniqueLines }), revision);
+        if (saved) alert(`${uniqueLines.length}개의 기관으로 목록이 교체되었습니다.`);
       }
     };
     reader.readAsText(file);
@@ -253,40 +283,39 @@ export default function App() {
     setConfirmModal({
       isOpen: true,
       message: '목록에서 삭제하시겠습니까? (기존 대장 기록은 유지됩니다)',
-      onConfirm: () => {
-        safeSave((latestData) => {
+      onConfirm: async () => {
+        const saved = await safeSave((latestData) => {
           return { ...latestData, items: (latestData.items || []).map(i => i.id === id ? { ...i, isDeleted: true } : i) };
         });
-        setConfirmModal({ isOpen: false, message: '', onConfirm: null });
+        if (saved) setConfirmModal({ isOpen: false, message: '', onConfirm: null });
       }
     });
   };
 
   // 🔥 [수정] 물품 순서 변경 시 (Safe Save 적용)
-  const handleMoveItem = (index, direction) => {
+  const handleMoveItem = (id, direction) => {
     safeSave((latestData) => {
       const newItems = [...(latestData.items || [])];
-      const currentItem = newItems[index];
-      if (direction === 'up') {
-        let targetIndex = index - 1;
-        while (targetIndex >= 0 && newItems[targetIndex].isDeleted) targetIndex--;
-        if (targetIndex >= 0) { newItems[index] = newItems[targetIndex]; newItems[targetIndex] = currentItem; }
-      } else if (direction === 'down') {
-        let targetIndex = index + 1;
-        while (targetIndex < newItems.length && newItems[targetIndex].isDeleted) targetIndex++;
-        if (targetIndex < newItems.length) { newItems[index] = newItems[targetIndex]; newItems[targetIndex] = currentItem; }
+      const index = newItems.findIndex((item) => item.id === id && !item.isDeleted);
+      if (index === -1) throw new Error('목록에 있는 물품을 다시 선택하세요.');
+      const step = direction === 'up' ? -1 : 1;
+      let target = index + step;
+      while (newItems[target]?.isDeleted) target += step;
+      if (newItems[target]) {
+        [newItems[index], newItems[target]] = [newItems[target], newItems[index]];
       }
       return { ...latestData, items: newItems };
     });
   };
 
   // 🔥 [수정] 물품 생성 시 (Safe Save 적용)
-  const handleCreateItem = () => {
+  const handleCreateItem = async () => {
     if (!newItemName.trim()) return;
-    safeSave((latestData) => {
-      return { ...latestData, items: [...(latestData.items || []), { id: Date.now(), name: newItemName, isDeleted: false }] };
+    const saved = await safeSave((latestData) => {
+      const items = latestData.items || [];
+      return { ...latestData, items: [...items, { id: nextId(items), name: newItemName, isDeleted: false }] };
     });
-    setNewItemName('');
+    if (saved) setNewItemName((current) => current === newItemName ? '' : current);
   };
 
   const processFile = (file) => {
@@ -296,17 +325,18 @@ export default function App() {
       try {
         const data = JSON.parse(e.target.result);
         if (data.logs && data.items) {
+          const revision = snapshot.current?.revision;
           setConfirmModal({
             isOpen: true,
             message: '파일을 불러오면 현재 작성 중인 내용이 덮어씌워집니다. 진행하시겠습니까?',
-            onConfirm: () => {
-              safeSave(() => data); // 파일 내용으로 강제 덮어쓰기
-              setActiveTab('calendar');
+            onConfirm: async () => {
+              const saved = await safeSave(() => ({ ...data, agencies: data.agencies || [] }), revision);
+              if (saved) setActiveTab('calendar');
               setConfirmModal({ isOpen: false, message: '', onConfirm: null });
             }
           });
         } else { alert('올바른 데이터 파일 형식이 아닙니다.'); }
-      } catch (error) { alert('파일을 읽는 중 오류가 발생했습니다.'); }
+      } catch { alert('파일을 읽는 중 오류가 발생했습니다.'); }
     };
     reader.readAsText(file);
   };
@@ -357,6 +387,7 @@ export default function App() {
                 <CheckCircle className="w-3 h-3" /> {saveStatus}
               </span>
             )}
+            {serverError && <span role="alert" className="text-xs bg-red-800 px-2 py-1 rounded">{serverError}</span>}
           </div>
           <div className="flex gap-2">
              <button onClick={handlePrint} className="px-4 py-2 rounded-lg text-sm font-bold bg-emerald-700 text-emerald-100 hover:bg-emerald-500 flex items-center gap-2">
@@ -516,13 +547,13 @@ export default function App() {
                   <button onClick={handleCreateItem} className="bg-emerald-600 text-white px-6 py-2 rounded-lg font-bold flex items-center gap-2"><Plus className="w-4 h-4" /> 추가</button>
                 </div>
                 <div className="flex-1 overflow-y-auto pb-24 space-y-2 pr-1">
-                  {items.map((item, index) => {
+                  {items.map((item) => {
                     if (item.isDeleted) return null;
                     return (
                       <div key={item.id} className="flex justify-between items-center p-3 bg-white border border-gray-100 rounded-lg shadow-sm hover:border-emerald-200 transition-colors">
                         <span className="font-medium text-gray-700">{item.name}</span>
                         <div className="flex items-center gap-1">
-                          <div className="flex flex-col mr-2"><button onClick={() => handleMoveItem(index, 'up')} className="p-1 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded" title="위로 이동"><ArrowUp className="w-3 h-3" /></button><button onClick={() => handleMoveItem(index, 'down')} className="p-1 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded" title="아래로 이동"><ArrowDown className="w-3 h-3" /></button></div>
+                          <div className="flex flex-col mr-2"><button onClick={() => handleMoveItem(item.id, 'up')} className="p-1 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded" title="위로 이동"><ArrowUp className="w-3 h-3" /></button><button onClick={() => handleMoveItem(item.id, 'down')} className="p-1 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded" title="아래로 이동"><ArrowDown className="w-3 h-3" /></button></div>
                           <button onClick={() => handleDeleteItem(item.id)} className="text-red-400 hover:text-red-600 p-2 rounded-full hover:bg-red-50" title="삭제"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       </div>
@@ -587,12 +618,16 @@ export default function App() {
                   <div className="p-4 border border-blue-100 bg-blue-50 rounded-lg">
                     <h3 className="font-bold text-blue-800 mb-2 flex items-center gap-2"><RefreshCw className="w-4 h-4" /> 수동 동기화 및 덮어쓰기</h3>
                     {/* 🔥 문구 수정됨 */}
-                    <p className="text-sm text-blue-600 mb-4">입력과 동시에 자동 저장 및 동기화되지만, 강제로 동기화하고 싶다면 이 버튼을 누르세요.<br/>지정된 공유폴더(네트워크 드라이브)에 확실하게 저장됩니다.</p>
+                    <p className="text-sm text-blue-600 mb-4">
+                      {electron ? '변경사항은 공유 폴더에 저장됩니다.' : '변경사항은 서버의 SQLite에 저장됩니다.'}
+                    </p>
                     <div className="flex gap-2">
-                      <button onClick={() => safeSave(data => data)} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2">새로고침 및 저장</button>
-                      <button onClick={() => window.electron && window.electron.openFolder()} className="bg-white text-blue-600 border border-blue-600 px-4 py-2 rounded-lg font-bold hover:bg-blue-50 flex items-center gap-2">
-                        <FolderOpen className="w-4 h-4" /> 저장 폴더 열기
-                      </button>
+                      <button onClick={() => refresh()} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2">최신 데이터 불러오기</button>
+                      {electron && (
+                        <button onClick={() => electron.openFolder()} className="bg-white text-blue-600 border border-blue-600 px-4 py-2 rounded-lg font-bold hover:bg-blue-50 flex items-center gap-2">
+                          <FolderOpen className="w-4 h-4" /> 저장 폴더 열기
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -603,8 +638,8 @@ export default function App() {
                   </div>
                   <div className="p-4 border border-gray-200 bg-white rounded-lg">
                     <h3 className="font-bold text-gray-800 mb-2 flex items-center gap-2"><Upload className="w-4 h-4" /> 파일 불러오기 (전체 덮어쓰기)</h3>
-                    <p className="text-sm text-gray-500 mb-4">저장해둔 백업 파일을 불러옵니다.<br/><span className="text-red-500 font-bold">주의: 공유폴더의 모든 데이터가 이 파일 내용으로 완전히 덮어씌워집니다.</span></p>
-                    <input type="file" onChange={(e) => processFile(e.target.files[0])} accept=".json" className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100" />
+                    <p className="text-sm text-gray-500 mb-4">저장해둔 백업 파일을 불러옵니다.<br/><span className="text-red-500 font-bold">주의: 현재 대장 전체가 이 파일의 내용으로 교체됩니다.</span></p>
+                    <input type="file" onChange={(e) => { processFile(e.target.files[0]); e.target.value = ''; }} accept=".json" className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100" />
                   </div>
                 </div>
               </div>
@@ -627,9 +662,9 @@ export default function App() {
               <div className="space-y-3 border-t pt-4">
                 <h4 className="text-sm font-bold text-gray-700">새 항목 추가</h4>
                 
-                {inputError && (
+                {(inputError || serverError) && (
                   <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded text-sm font-bold mb-2 flex items-center gap-2 animate-pulse">
-                    <AlertTriangle className="w-4 h-4" /> {inputError}
+                    <AlertTriangle className="w-4 h-4" /> {inputError || serverError}
                   </div>
                 )}
 
@@ -698,6 +733,7 @@ export default function App() {
           <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full transform scale-100">
             <div className="flex items-center gap-3 mb-4 text-red-600"><AlertTriangle className="w-6 h-6" /><h3 className="font-bold text-lg">확인 필요</h3></div>
             <p className="text-gray-600 mb-6">{confirmModal.message}</p>
+            {serverError && <p className="text-red-700 mb-4">{serverError}</p>}
             <div className="flex justify-end gap-3"><button onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })} className="px-4 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold hover:bg-gray-300">취소</button><button onClick={confirmModal.onConfirm} className="px-4 py-2 rounded-lg bg-red-600 text-white font-bold hover:bg-red-700">확인</button></div>
           </div>
         </div>
