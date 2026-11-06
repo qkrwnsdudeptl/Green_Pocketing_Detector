@@ -4,6 +4,14 @@ import { engToKor } from './hangeul.js';
 
 const inventoryUrl = '/api/v1/inventory';
 const sqliteUrl = `${inventoryUrl}/sqlite`;
+const navigation = [
+  { id: 'calendar', label: '달력 대장', icon: Calendar },
+  { id: 'report', label: '월별 보고서', icon: FileText },
+  { id: 'stats', label: '연간 통계', icon: BarChart3 },
+  { id: 'items', label: '품목 관리', icon: Package },
+  { id: 'agencies', label: '기관 관리', icon: Building },
+  { id: 'data', label: '데이터 관리', icon: Save },
+];
 const nextId = (records) => records.reduce((next, record) => Math.max(next, record.id + 1), Date.now());
 
 async function inventoryRequest(options, url = inventoryUrl) {
@@ -414,13 +422,11 @@ export default function App() {
   const getItemName = (id) => items.find(i => i.id === id)?.name || '삭제된 품목';
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50 text-slate-800 font-sans print:bg-white print:h-auto relative p-4 md:p-6 overflow-hidden"
+    <div className="min-h-dvh bg-gray-50 text-slate-800 font-sans print:bg-white print:min-h-0"
       onDragEnter={handleDragEnter} onDragLeave={handleDragLeave} onDragOver={handleDragOver} onDrop={handleDrop}
     >
-      <div className="max-w-7xl mx-auto w-full bg-white shadow-md rounded-lg flex flex-col h-full relative overflow-hidden print:h-auto print:shadow-none print:p-0 print:overflow-visible p-4 md:p-6">
-        
         {isDragging && (
-          <div className="absolute inset-0 z-[100] bg-emerald-600/90 flex flex-col items-center justify-center text-white backdrop-blur-sm transition-all duration-300 pointer-events-none rounded-lg">
+          <div className="fixed inset-0 z-[100] bg-emerald-600/90 flex flex-col items-center justify-center text-white backdrop-blur-sm transition-all duration-300 pointer-events-none no-print">
             <Upload className="w-20 h-20 mb-4 animate-bounce" />
             <h2 className="text-3xl font-bold">파일을 여기에 놓으세요</h2>
             <p className="mt-2 text-emerald-100">데이터가 자동으로 로드됩니다</p>
@@ -430,10 +436,10 @@ export default function App() {
         <style>{`@media print { @page { size: A4; margin: 15mm; } body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } .no-print { display: none !important; } .print-full { height: auto !important; overflow: visible !important; width: 100% !important; } .print-text-black { color: black !important; } .print-border-black { border-color: black !important; } .break-inside-avoid { break-inside: avoid; } }`}</style>
 
         {/* Header */}
-        <header className="bg-emerald-600 text-white p-4 shadow-md flex justify-between items-center rounded-lg mb-4 no-print shrink-0">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-bold flex items-center gap-2">
-              <Calendar className="w-6 h-6" />
+        <header className="w-full bg-emerald-600 text-white px-3 py-3 sm:p-4 lg:px-6 shadow-md flex flex-wrap justify-between items-center gap-x-6 gap-y-3 no-print">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <h1 className="text-base sm:text-xl font-bold flex items-center gap-2">
+              <Calendar className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
               녹색마을만들기 물품 대장
             </h1>
             {saveStatus && (
@@ -442,9 +448,7 @@ export default function App() {
               </span>
             )}
             {serverError && <span role="alert" className="text-xs bg-red-800 px-2 py-1 rounded">{serverError}</span>}
-          </div>
-          <div className="flex gap-2">
-             <button onClick={handlePrint} className="px-4 py-2 rounded-lg text-sm font-bold bg-emerald-700 text-emerald-100 hover:bg-emerald-500 flex items-center gap-2">
+            <button onClick={handlePrint} className="px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold bg-emerald-700 text-emerald-100 hover:bg-emerald-500 flex items-center gap-1 sm:gap-2">
               <Printer className="w-4 h-4" /> 인쇄
             </button>
             {activeTab === 'report' && (
@@ -452,36 +456,26 @@ export default function App() {
                 <FileType className="w-4 h-4" /> Word 저장
               </button>
             )}
-            <div className="h-8 w-px bg-emerald-500 mx-2"></div>
-            <button onClick={() => setActiveTab('calendar')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeTab === 'calendar' ? 'bg-white text-emerald-700' : 'bg-emerald-700 text-emerald-100 hover:bg-emerald-500'}`}>
-              📅 달력 대장
-            </button>
-            <button onClick={() => setActiveTab('report')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors flex items-center gap-1 ${activeTab === 'report' ? 'bg-white text-emerald-700' : 'bg-emerald-700 text-emerald-100 hover:bg-emerald-500'}`}>
-              <FileText className="w-4 h-4" /> 월별 보고서
-            </button>
-            <button onClick={() => setActiveTab('stats')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors flex items-center gap-1 ${activeTab === 'stats' ? 'bg-white text-emerald-700' : 'bg-emerald-700 text-emerald-100 hover:bg-emerald-500'}`}>
-              <BarChart3 className="w-4 h-4" /> 연간 통계
-            </button>
-            <button onClick={() => setActiveTab('items')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeTab === 'items' ? 'bg-white text-emerald-700' : 'bg-emerald-700 text-emerald-100 hover:bg-emerald-500'}`}>
-              📦 품목 관리
-            </button>
-            <button onClick={() => setActiveTab('agencies')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors flex items-center gap-1 ${activeTab === 'agencies' ? 'bg-white text-emerald-700' : 'bg-emerald-700 text-emerald-100 hover:bg-emerald-500'}`}>
-              <Building className="w-4 h-4" /> 기관 관리
-            </button>
-            <button onClick={() => setActiveTab('data')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeTab === 'data' ? 'bg-white text-emerald-700' : 'bg-emerald-700 text-emerald-100 hover:bg-emerald-500'}`}>
-              💾 데이터 관리
-            </button>
           </div>
+          <nav aria-label="주 메뉴" className="grid w-full grid-cols-3 gap-1.5 sm:flex sm:w-auto sm:flex-wrap sm:gap-2">
+            {navigation.map(({ id, label, icon }) => (
+              <button key={id} type="button" aria-pressed={activeTab === id} onClick={() => setActiveTab(id)}
+                className={`flex min-h-10 items-center justify-center gap-1 whitespace-nowrap rounded-lg px-1 py-2 text-xs font-bold transition-colors sm:px-3 sm:text-sm ${activeTab === id ? 'bg-white text-emerald-700' : 'bg-emerald-700 text-emerald-100 hover:bg-emerald-500'}`}>
+                {React.createElement(icon, { 'aria-hidden': true, className: 'w-4 h-4 shrink-0' })} {label}
+              </button>
+            ))}
+          </nav>
         </header>
 
-        <main className="flex-1 overflow-hidden print:p-0 print:overflow-visible flex flex-col">
+        <div className="px-2 py-4 sm:px-4 md:px-6 print:p-0">
+        <main className={`flex min-w-0 flex-col rounded-lg bg-white shadow-md p-2 sm:p-4 md:p-6 print:h-auto print:p-0 print:shadow-none ${activeTab === 'calendar' ? 'mx-auto max-w-7xl lg:h-[calc(100dvh-132px)] lg:min-h-[37rem] print:min-h-0 print:max-w-none' : ''}`}>
           {activeTab !== 'data' && activeTab !== 'agencies' && (
-            <div className="p-4 flex justify-between items-center bg-white rounded-t-xl border-b border-gray-200 no-print shrink-0">
-              <div className="flex items-center gap-4">
-                <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))} className="p-1 hover:bg-gray-100 rounded-full"><ChevronLeft /></button>
-                <h2 className="text-2xl font-bold text-gray-800">{currentDate.getFullYear()}년 {activeTab === 'stats' ? '' : `${currentDate.getMonth() + 1}월`}</h2>
-                <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))} className="p-1 hover:bg-gray-100 rounded-full"><ChevronRight /></button>
-                <button onClick={() => setCurrentDate(new Date())} className="ml-2 text-xs bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full font-bold hover:bg-emerald-200 transition-colors">{activeTab === 'stats' ? '올해' : '이번 달'}</button>
+            <div className="p-2 sm:p-4 flex flex-wrap justify-between items-center gap-2 bg-white rounded-t-xl border-b border-gray-200 no-print shrink-0">
+              <div className="flex flex-wrap items-center gap-1 sm:gap-4">
+                <button aria-label="이전 달" onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))} className="p-1 hover:bg-gray-100 rounded-full"><ChevronLeft /></button>
+                <h2 className="text-lg sm:text-2xl font-bold text-gray-800">{currentDate.getFullYear()}년 {activeTab === 'stats' ? '' : `${currentDate.getMonth() + 1}월`}</h2>
+                <button aria-label="다음 달" onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))} className="p-1 hover:bg-gray-100 rounded-full"><ChevronRight /></button>
+                <button onClick={() => setCurrentDate(new Date())} className="sm:ml-2 text-xs bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full font-bold hover:bg-emerald-200 transition-colors">{activeTab === 'stats' ? '올해' : '이번 달'}</button>
               </div>
               <div className="text-sm text-gray-500">
                 {activeTab === 'calendar' ? '* 날짜를 클릭하여 기록 / 상단 [인쇄] 버튼으로 출력' : activeTab === 'report' ? '* 우측 상단 [Word 저장]을 눌러 편집 가능한 파일로 저장하세요.' : activeTab === 'stats' ? '* 연간 전체 기록을 기관별로 조회하고 인쇄합니다.' : ''}
@@ -489,9 +483,9 @@ export default function App() {
             </div>
           )}
 
-          <div className="flex-1 overflow-auto h-full">
+          <div className="min-h-0 flex-1">
             {activeTab === 'calendar' && (
-              <div className="h-full flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 print:border-none print:shadow-none print:h-auto">
+              <div className="lg:h-full flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 print:border-none print:shadow-none print:h-auto">
                 <div className="bg-emerald-50 p-3 border-b border-emerald-100 flex items-center gap-4 overflow-x-auto no-print shrink-0">
                   <div className="flex items-center gap-2 text-emerald-800 font-bold whitespace-nowrap"><BarChart3 className="w-5 h-5" /><span>이번 달 통계:</span></div>
                   <div className="flex gap-3 text-sm">
@@ -506,19 +500,20 @@ export default function App() {
                 <div className="grid grid-cols-7 text-center py-2 bg-gray-50 border-b border-gray-200 font-bold text-gray-600 print:bg-white print:text-black print:border-black shrink-0">
                   <div className="text-red-500">일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div className="text-blue-500">토</div>
                 </div>
-                <div className="grid grid-cols-7 flex-1 auto-rows-fr overflow-auto bg-gray-200 gap-px border border-gray-200 print:bg-black print:border-black print:gap-[1px] print:overflow-visible print:h-auto">
+                <div className="grid grid-cols-7 flex-1 auto-rows-fr lg:overflow-y-auto bg-gray-200 gap-px border border-gray-200 print:bg-black print:border-black print:gap-[1px] print:overflow-visible print:h-auto">
                   {getDaysInMonth(currentDate).map((date, idx) => {
                     const dateKey = formatDateKey(date);
                     const dayLogs = dateKey ? logs[dateKey] : [];
                     const isToday = isSameDay(date, today);
                     return (
-                      <div key={idx} onClick={() => handleDayClick(date)} className={`bg-white min-h-[100px] p-2 flex flex-col gap-1 transition-colors hover:bg-emerald-50 cursor-pointer ${!date ? 'bg-gray-50 print:bg-white' : ''} ${isToday ? 'bg-blue-50/50 print:bg-white' : ''} print:min-h-[120px] print:block relative overflow-hidden group`}>
+                      <div key={idx} onClick={() => handleDayClick(date)} className={`bg-white min-h-16 sm:min-h-[100px] p-0.5 sm:p-2 flex flex-col gap-1 transition-colors hover:bg-emerald-50 cursor-pointer ${!date ? 'bg-gray-50 print:bg-white' : ''} ${isToday ? 'bg-blue-50/50 print:bg-white' : ''} print:min-h-[120px] print:p-2 print:block relative overflow-hidden group`}>
                         {date && (
                           <>
                             <div className="flex justify-between items-start shrink-0">
                               <span className={`text-sm font-bold flex items-center justify-center w-7 h-7 print:text-black ${isToday ? 'bg-blue-600 text-white rounded-full shadow-md print:bg-transparent print:border print:border-black print:text-black' : date.getDay() === 0 ? 'text-red-500' : date.getDay() === 6 ? 'text-blue-500' : 'text-gray-700'}`}>{date.getDate()}</span>
                             </div>
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-1 mt-1 overflow-y-auto max-h-[140px] pr-1 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent print:max-h-none print:overflow-visible print:block">
+                            {dayLogs?.length > 0 && <span className="self-center rounded bg-emerald-100 px-0.5 text-[10px] font-bold text-emerald-800 sm:hidden print:hidden">{dayLogs.length}건</span>}
+                            <div className="hidden sm:grid grid-cols-1 lg:grid-cols-2 gap-1 mt-1 overflow-y-auto max-h-[140px] pr-1 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent print:max-h-none print:overflow-visible print:block">
                               {dayLogs && dayLogs.map((log) => (
                                 <div key={log.id} className="text-xs bg-emerald-100 text-emerald-800 p-1 rounded border border-emerald-200 print:bg-white print:border-none print:text-black print:p-0 print:mb-1">
                                   <div className="flex flex-col print:block">
@@ -539,14 +534,14 @@ export default function App() {
             )}
 
             {activeTab === 'report' && (
-              <div className="min-h-full bg-white rounded-xl shadow-sm border border-gray-200 p-8 print:p-0 print:border-none print:shadow-none print:w-full">
-                <div className="text-center mb-10 pb-4 border-b-2 border-gray-800 print:mb-6"><h1 className="text-3xl font-bold text-gray-900 print:text-black">{currentDate.getFullYear()}년 {currentDate.getMonth() + 1}월 물품 수불 대장</h1></div>
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3 sm:p-6 lg:p-8 print:p-0 print:border-none print:shadow-none print:w-full">
+                <div className="text-center mb-6 sm:mb-10 pb-4 border-b-2 border-gray-800 print:mb-6"><h1 className="text-xl sm:text-3xl font-bold text-gray-900 print:text-black">{currentDate.getFullYear()}년 {currentDate.getMonth() + 1}월 물품 수불 대장</h1></div>
                 {Object.keys(reportData).length > 0 ? (
                   <div className="space-y-8 print:space-y-6">
                     {Object.values(reportData).map(data => (
                       <div key={data.name} className="break-inside-avoid">
-                        <div className="flex justify-between items-center mb-2 px-2 border-l-4 border-gray-800 bg-gray-100 py-2 print:bg-gray-50 print:border-black"><h3 className="text-lg font-bold text-gray-800 print:text-black">{data.name}</h3><span className="font-bold text-emerald-700 print:text-black">총 {data.totalQty}개 출고</span></div>
-                        <table className="w-full text-sm text-left border-collapse border border-gray-300 print:border-black">
+                         <div className="flex flex-wrap justify-between items-center gap-2 mb-2 px-2 border-l-4 border-gray-800 bg-gray-100 py-2 print:bg-gray-50 print:border-black"><h3 className="min-w-0 break-words text-lg font-bold text-gray-800 print:text-black">{data.name}</h3><span className="font-bold text-emerald-700 print:text-black">총 {data.totalQty}개 출고</span></div>
+                          <table className="w-full table-fixed break-words text-sm text-left border-collapse border border-gray-300 print:border-black">
                           <thead className="bg-gray-50 print:bg-gray-100"><tr><th className="py-2 pl-4 w-1/5 border-b border-r border-gray-300 print:border-black">일자</th><th className="py-2 pl-4 w-3/5 border-b border-r border-gray-300 print:border-black">제공 기관 (사용처)</th><th className="py-2 pr-4 text-right w-1/5 border-b border-gray-300 print:border-black">수량</th></tr></thead>
                           <tbody>
                             {data.logs.map(log => (
@@ -563,25 +558,25 @@ export default function App() {
             )}
 
             {activeTab === 'stats' && (
-              <div className="h-full bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col print:border-none print:shadow-none print:w-full print:h-auto print:block">
-                <div className="p-6 pb-0 print:hidden shrink-0">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col print:border-none print:shadow-none print:w-full print:block">
+                <div className="px-3 pt-3 sm:px-6 sm:pt-6 print:hidden">
                   <div className="flex flex-col md:flex-row gap-4 items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
                     <div className="flex items-center gap-3 w-full md:w-auto"><Search className="w-5 h-5 text-gray-400" /><span className="font-bold text-gray-700 whitespace-nowrap">기관 선택:</span>
-                       <select value={selectedOrg} onChange={(e) => setSelectedOrg(e.target.value)} className="w-full md:w-64 border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-emerald-500 bg-white">
+                       <select value={selectedOrg} onChange={(e) => setSelectedOrg(e.target.value)} className="w-full min-w-0 md:w-64 border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-emerald-500 bg-white">
                          <option value="ALL">전체 기관 (많이 가져간 순)</option>{yearlyStats.allOrgs.map(org => (<option key={org} value={org}>{org}</option>))}
                        </select>
                     </div>
                     <div className="text-sm text-gray-500">총 <strong className="text-emerald-600">{yearlyStats.totalCount}건</strong>의 기록이 조회되었습니다.</div>
                   </div>
                 </div>
-                <div className="flex-1 overflow-auto p-6 pt-6 print:p-0 print:overflow-visible">
-                  <div className="text-center mb-10 pb-4 border-b-2 border-gray-800 print:mb-6"><h1 className="text-3xl font-bold text-gray-900 print:text-black">{currentDate.getFullYear()}년도 기관별 물품 수불 통계</h1><p className="text-gray-500 mt-2 print:text-black">조회 기준: {selectedOrg === 'ALL' ? '전체 기관 (수령량 내림차순)' : selectedOrg}</p></div>
+                <div className="p-3 sm:p-6 print:p-0">
+                  <div className="text-center mb-6 sm:mb-10 pb-4 border-b-2 border-gray-800 print:mb-6"><h1 className="text-xl sm:text-3xl font-bold text-gray-900 print:text-black">{currentDate.getFullYear()}년도 기관별 물품 수불 통계</h1><p className="text-gray-500 mt-2 break-words print:text-black">조회 기준: {selectedOrg === 'ALL' ? '전체 기관 (수령량 내림차순)' : selectedOrg}</p></div>
                   {yearlyStats.sortedGroupedData.length > 0 ? (
                     <div className="space-y-8 print:space-y-6 pb-10">
                       {yearlyStats.sortedGroupedData.map(([orgName, data]) => (
                         <div key={orgName} className="break-inside-avoid shadow-sm border border-gray-200 rounded-lg overflow-hidden print:shadow-none print:border-none print:rounded-none">
-                          <div className="flex justify-between items-center px-4 py-3 bg-emerald-50 border-b border-emerald-100 print:bg-gray-100 print:border-black print:border-b-2"><h3 className="text-xl font-bold text-gray-900 print:text-black flex items-center gap-2">{orgName}<span className="text-xs font-normal text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 print:hidden">{data.logs.length}건 기록</span></h3><span className="text-lg font-bold text-emerald-700 print:text-black">총 {data.totalQty}개 수령</span></div>
-                          <table className="w-full text-sm text-left border-collapse print:border-black">
+                          <div className="flex flex-wrap justify-between items-center gap-2 px-3 sm:px-4 py-3 bg-emerald-50 border-b border-emerald-100 print:bg-gray-100 print:border-black print:border-b-2"><h3 className="min-w-0 break-words text-base sm:text-xl font-bold text-gray-900 print:text-black">{orgName}<span className="ml-2 inline-block text-xs font-normal text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 print:hidden">{data.logs.length}건 기록</span></h3><span className="text-sm sm:text-lg font-bold text-emerald-700 print:text-black">총 {data.totalQty}개 수령</span></div>
+                          <table className="w-full table-fixed break-words text-sm text-left border-collapse print:border-black">
                             <thead className="bg-gray-50 text-gray-600 print:bg-gray-50 print:text-black"><tr><th className="py-2 pl-4 w-1/4 border-b border-r border-gray-200 print:border-black font-semibold">날짜</th><th className="py-2 pl-4 w-2/4 border-b border-r border-gray-200 print:border-black font-semibold">품목명</th><th className="py-2 pr-4 text-right w-1/4 border-b border-gray-200 print:border-black font-semibold">수량</th></tr></thead>
                             <tbody className="divide-y divide-gray-100">{data.logs.map((log, idx) => (<tr key={`${log.id}-${idx}`} className="hover:bg-gray-50 print:border-b print:border-gray-300"><td className="py-2 pl-4 border-r border-gray-100 print:border-black text-gray-700 print:text-black">{log.month}월 {log.day}일</td><td className="py-2 pl-4 border-r border-gray-100 print:border-black font-medium text-gray-900 print:text-black">{getItemName(log.itemId)}</td><td className="py-2 pr-4 text-right text-gray-900 print:text-black font-bold">{log.qty}</td></tr>))}</tbody>
                           </table>
@@ -594,19 +589,19 @@ export default function App() {
             )}
 
             {activeTab === 'items' && (
-              <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-6 no-print h-full flex flex-col">
+              <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-3 sm:p-6 no-print">
                 <h2 className="text-lg font-bold mb-4 flex items-center gap-2 shrink-0"><Package className="w-5 h-5 text-emerald-600" />물품 목록 관리</h2>
                  <div className="flex gap-2 mb-6 shrink-0">
-                  <input type="text" value={newItemName} onChange={(e) => setNewItemName(e.target.value)} placeholder="새 물품명 입력" className="flex-1 border border-gray-300 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-emerald-500" onKeyPress={(e) => e.key === 'Enter' && handleCreateItem()} />
-                  <button onClick={handleCreateItem} className="bg-emerald-600 text-white px-6 py-2 rounded-lg font-bold flex items-center gap-2"><Plus className="w-4 h-4" /> 추가</button>
+                  <input type="text" value={newItemName} onChange={(e) => setNewItemName(e.target.value)} placeholder="새 물품명 입력" className="min-w-0 flex-1 border border-gray-300 rounded-lg px-3 sm:px-4 py-2 outline-none focus:ring-2 focus:ring-emerald-500" onKeyPress={(e) => e.key === 'Enter' && handleCreateItem()} />
+                  <button onClick={handleCreateItem} className="shrink-0 bg-emerald-600 text-white px-3 sm:px-6 py-2 rounded-lg font-bold flex items-center gap-2"><Plus className="w-4 h-4" /> 추가</button>
                 </div>
-                <div className="flex-1 overflow-y-auto pb-24 space-y-2 pr-1">
+                <div className="space-y-2">
                   {items.map((item) => {
                     if (item.isDeleted) return null;
                     return (
                       <div key={item.id} className="flex justify-between items-center p-3 bg-white border border-gray-100 rounded-lg shadow-sm hover:border-emerald-200 transition-colors">
-                        <span className="font-medium text-gray-700">{item.name}</span>
-                        <div className="flex items-center gap-1">
+                        <span className="min-w-0 break-words font-medium text-gray-700">{item.name}</span>
+                        <div className="flex shrink-0 items-center gap-1">
                           <div className="flex flex-col mr-2"><button onClick={() => handleMoveItem(item.id, 'up')} className="p-1 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded" title="위로 이동"><ArrowUp className="w-3 h-3" /></button><button onClick={() => handleMoveItem(item.id, 'down')} className="p-1 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded" title="아래로 이동"><ArrowDown className="w-3 h-3" /></button></div>
                           <button onClick={() => handleDeleteItem(item.id)} className="text-red-400 hover:text-red-600 p-2 rounded-full hover:bg-red-50" title="삭제"><Trash2 className="w-4 h-4" /></button>
                         </div>
@@ -620,11 +615,11 @@ export default function App() {
 
             {/* 기관 관리 탭 */}
             {activeTab === 'agencies' && (
-              <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-6 no-print h-full flex flex-col">
-                <div className="flex justify-between items-center mb-4">
+              <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-3 sm:p-6 no-print">
+                <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
                   <h2 className="text-lg font-bold flex items-center gap-2 shrink-0"><Building className="w-5 h-5 text-emerald-600" />기관 목록 관리</h2>
                   
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button onClick={handleExportAgenciesTxt} className="text-xs bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 hover:bg-gray-200">
                       <FileDown className="w-3 h-3" /> 목록 내보내기
                     </button>
@@ -645,16 +640,16 @@ export default function App() {
                         setNewAgencyName(converted);
                     }} 
                     placeholder="새 기관명 입력 (예: 가덕복지회관)" 
-                    className="flex-1 border border-gray-300 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-emerald-500" 
+                    className="min-w-0 flex-1 border border-gray-300 rounded-lg px-3 sm:px-4 py-2 outline-none focus:ring-2 focus:ring-emerald-500"
                     onKeyPress={(e) => e.key === 'Enter' && handleAddAgency()} 
                   />
-                  <button onClick={handleAddAgency} className="bg-emerald-600 text-white px-6 py-2 rounded-lg font-bold flex items-center gap-2"><Plus className="w-4 h-4" /> 추가</button>
+                  <button onClick={handleAddAgency} className="shrink-0 bg-emerald-600 text-white px-3 sm:px-6 py-2 rounded-lg font-bold flex items-center gap-2"><Plus className="w-4 h-4" /> 추가</button>
                 </div>
-                <div className="flex-1 overflow-y-auto pb-24 space-y-2 pr-1">
+                <div className="space-y-2">
                   {agencies.length > 0 ? (
                     agencies.map((agency, index) => (
                       <div key={index} className="flex justify-between items-center p-3 bg-white border border-gray-100 rounded-lg shadow-sm hover:border-emerald-200 transition-colors">
-                        <span className="font-medium text-gray-700">{agency}</span>
+                        <span className="min-w-0 break-words font-medium text-gray-700">{agency}</span>
                         <button onClick={() => handleDeleteAgency(agency)} className="text-red-400 hover:text-red-600 p-2 rounded-full hover:bg-red-50" title="삭제"><Trash2 className="w-4 h-4" /></button>
                       </div>
                     ))
@@ -666,7 +661,7 @@ export default function App() {
             )}
 
             {activeTab === 'data' && (
-              <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-6 no-print h-full overflow-y-auto">
+              <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-3 sm:p-6 no-print">
                 <h2 className="text-lg font-bold mb-6 flex items-center gap-2"><Save className="w-5 h-5 text-emerald-600" />데이터 저장 및 불러오기</h2>
                 <div className="grid gap-6">
                   <button type="button" onClick={downloadStocktake} className="w-fit bg-blue-600 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2">
@@ -678,7 +673,7 @@ export default function App() {
                     <p className="text-sm text-blue-600 mb-4">
                       {electron ? '변경사항은 공유 폴더에 저장됩니다.' : '변경사항은 서버의 SQLite에 저장됩니다.'}
                     </p>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <button onClick={() => refresh()} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2">최신 데이터 불러오기</button>
                       {electron && (
                         <button onClick={() => electron.openFolder()} className="bg-white text-blue-600 border border-blue-600 px-4 py-2 rounded-lg font-bold hover:bg-blue-50 flex items-center gap-2">
@@ -721,9 +716,9 @@ export default function App() {
 
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[110] p-4 no-print">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-full overflow-y-auto">
             <div className="bg-emerald-600 text-white p-4 flex justify-between items-center"><h3 className="font-bold text-lg flex items-center gap-2"><Calendar className="w-5 h-5" />{selectedDate} 기록</h3><button onClick={() => setIsModalOpen(false)} className="hover:bg-emerald-700 p-1 rounded"><X className="w-5 h-5" /></button></div>
-            <div className="p-6 space-y-4">
+            <div className="p-4 sm:p-6 space-y-4">
               <div className="bg-gray-50 rounded-lg p-3 min-h-[100px] max-h-[150px] overflow-y-auto mb-4 border border-gray-200">
                 <h4 className="text-xs font-bold text-gray-500 mb-2 uppercase">등록된 내역</h4>
                 {logs[selectedDate]?.length > 0 ? (
@@ -801,7 +796,7 @@ export default function App() {
 
       {confirmModal.isOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[120] p-4 no-print animate-in fade-in duration-200">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full transform scale-100">
+          <div className="bg-white rounded-lg shadow-xl p-4 sm:p-6 max-w-sm w-full max-h-full overflow-y-auto transform scale-100">
             <div className="flex items-center gap-3 mb-4 text-red-600"><AlertTriangle className="w-6 h-6" /><h3 className="font-bold text-lg">확인 필요</h3></div>
             <p className="text-gray-600 mb-6">{confirmModal.message}</p>
             {serverError && <p className="text-red-700 mb-4">{serverError}</p>}
