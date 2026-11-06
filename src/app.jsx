@@ -13,6 +13,22 @@ const navigation = [
   { id: 'data', label: '데이터 관리', icon: Save },
 ];
 const nextId = (records) => records.reduce((next, record) => Math.max(next, record.id + 1), Date.now());
+const viewKey = 'green-village-inventory:view';
+
+function loadView() {
+  let saved;
+  try {
+    saved = JSON.parse(window.localStorage.getItem(viewKey));
+  } catch {
+    // The app also works when browser storage is unavailable.
+  }
+  const date = new Date(saved?.currentDate ?? NaN);
+  return {
+    activeTab: navigation.some(({ id }) => id === saved?.activeTab) ? saved.activeTab : 'calendar',
+    currentDate: Number.isNaN(date.getTime()) ? new Date() : date,
+    selectedOrg: typeof saved?.selectedOrg === 'string' ? saved.selectedOrg : 'ALL',
+  };
+}
 const uncategorized = { id: 0, name: '미분류' };
 const categoryOf = (item) => item.categoryId ?? uncategorized.id;
 const selectClass = 'w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500';
@@ -46,8 +62,19 @@ async function inventoryRequest(options, url = inventoryUrl) {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('calendar'); 
-  const [currentDate, setCurrentDate] = useState(new Date()); 
+  const [view, setView] = useState(loadView);
+  const { activeTab, currentDate, selectedOrg } = view;
+  const setActiveTab = (value) => setView((current) => ({ ...current, activeTab: value }));
+  const setCurrentDate = (value) => setView((current) => ({ ...current, currentDate: value }));
+  const setSelectedOrg = (value) => setView((current) => ({ ...current, selectedOrg: value }));
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(viewKey, JSON.stringify(view));
+    } catch {
+      // Keep navigation usable if the browser blocks storage.
+    }
+  }, [view]);
   const [saveStatus, setSaveStatus] = useState(''); 
   const [serverError, setServerError] = useState('');
   const snapshot = useRef(null);
@@ -191,7 +218,6 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const dragCounter = useRef(0);
-  const [selectedOrg, setSelectedOrg] = useState('ALL'); 
 
   // (통계 로직 등은 기존과 동일)
   const getDaysInMonth = (date) => {
