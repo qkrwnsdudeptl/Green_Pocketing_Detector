@@ -13,6 +13,9 @@ const navigation = [
   { id: 'data', label: '데이터 관리', icon: Save },
 ];
 const nextId = (records) => records.reduce((next, record) => Math.max(next, record.id + 1), Date.now());
+const uncategorized = { id: 0, name: '미분류' };
+const categoryOf = (item) => item.categoryId ?? uncategorized.id;
+const selectClass = 'w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500';
 const agencyKey = (name) => name.replace(/\s+/g, '');
 
 function indexAgencies(agencies, logs) {
@@ -52,6 +55,7 @@ export default function App() {
   const electron = window.electron;
 
   const [items, setItems] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [logs, setLogs] = useState({});
   const [agencies, setAgencies] = useState([]);
   const agencyIndex = useMemo(() => indexAgencies(agencies, logs), [agencies, logs]);
@@ -63,15 +67,19 @@ export default function App() {
   const [isCapsLockOn, setIsCapsLockOn] = useState(false);
   const [inputError, setInputError] = useState('');
   
-  const [newItemData, setNewItemData] = useState({ itemId: '', org: '', qty: '' });
+  const [newItemData, setNewItemData] = useState({ categoryId: '', itemId: '', org: '', qty: '' });
   const agencyInput = useRef(null);
   const [newAgencyName, setNewAgencyName] = useState('');
   const [newItemName, setNewItemName] = useState('');
+  const [newItemCategory, setNewItemCategory] = useState(uncategorized.id);
+  const createItemCategory = categories.some(({ id }) => id === newItemCategory) ? newItemCategory : uncategorized.id;
+  const [newCategoryName, setNewCategoryName] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: '', onConfirm: null });
 
   const showData = useCallback((data) => {
     setItems(data.items || []);
+    setCategories(data.categories || []);
     setLogs(data.logs || {});
     setAgencies(data.agencies || []);
   }, []);
@@ -137,6 +145,9 @@ export default function App() {
           await refresh();
         } else {
           const data = update(base.data);
+          if (data.categories && !base.data.categories) {
+            throw new Error('대분류를 사용하려면 서버를 업데이트하고 다시 시작하세요.');
+          }
           const { revision } = await inventoryRequest({
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -231,7 +242,12 @@ export default function App() {
     setMatchedAgencies([]);
     setMatchIndex(-1);
     const firstValidItem = items.find(i => !i.isDeleted);
-    setNewItemData({ itemId: firstValidItem?.id || '', org: '', qty: '' });
+    setNewItemData({
+      categoryId: categories.length ? '' : uncategorized.id,
+      itemId: categories.length ? '' : firstValidItem?.id || '',
+      org: '',
+      qty: '',
+    });
   };
 
   // 🔥 [수정] 달력 기록 추가 시 (Safe Save 적용)
@@ -260,7 +276,8 @@ export default function App() {
   const saveEntry = async (org) => {
     const saved = await safeSave((latestData) => {
       const itemId = Number(newItemData.itemId);
-      if (!latestData.items.some((item) => item.id === itemId && !item.isDeleted)) {
+      if (!latestData.items.some((item) => item.id === itemId && !item.isDeleted
+          && categoryOf(item) === newItemData.categoryId)) {
         throw new Error('목록에 있는 물품을 다시 선택하세요.');
       }
       const currentLogs = latestData.logs || {};
@@ -275,7 +292,7 @@ export default function App() {
 
     const firstValidItem = items.find(i => !i.isDeleted);
     setNewItemData((current) => current === newItemData
-      ? { itemId: firstValidItem?.id || '', org: '', qty: '' }
+      ? { ...current, itemId: categories.length ? '' : firstValidItem?.id || '', org: '', qty: '' }
       : current);
     setMatchedAgencies([]); 
     setMatchIndex(-1);
@@ -389,7 +406,10 @@ export default function App() {
       if (index === -1) throw new Error('목록에 있는 물품을 다시 선택하세요.');
       const step = direction === 'up' ? -1 : 1;
       let target = index + step;
-      while (newItems[target]?.isDeleted) target += step;
+      const categoryId = categoryOf(newItems[index]);
+      while (newItems[target] && (newItems[target].isDeleted || categoryOf(newItems[target]) !== categoryId)) {
+        target += step;
+      }
       if (newItems[target]) {
         [newItems[index], newItems[target]] = [newItems[target], newItems[index]];
       }
@@ -402,9 +422,57 @@ export default function App() {
     if (!newItemName.trim()) return;
     const saved = await safeSave((latestData) => {
       const items = latestData.items || [];
-      return { ...latestData, items: [...items, { id: nextId(items), name: newItemName, isDeleted: false }] };
+      if (createItemCategory && !latestData.categories?.some((category) => category.id === createItemCategory)) {
+        throw new Error('대분류를 다시 선택하세요.');
+      }
+      const item = { id: nextId(items), name: newItemName, isDeleted: false, categoryId: createItemCategory || null };
+      return { ...latestData, items: [...items, item] };
     });
     if (saved) setNewItemName((current) => current === newItemName ? '' : current);
+  };
+
+  const handleCreateCategory = async () => {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    const saved = await safeSave((data) => {
+      const existing = data.categories || [];
+      if (name === uncategorized.name || existing.some((category) => category.name === name)) {
+        throw new Error('이미 사용하는 대분류 이름입니다.');
+      }
+      return { ...data, categories: [...existing, { id: nextId(existing), name }] };
+    });
+    if (saved) setNewCategoryName((current) => current === newCategoryName ? '' : current);
+  };
+
+  const handleAssignCategory = (itemId, categoryId) => {
+    safeSave((data) => ({
+      ...data,
+      items: data.items.map((item) => item.id === itemId
+        ? { ...item, categoryId: categoryId || null }
+        : item),
+    }));
+  };
+
+  const handleDeleteCategory = (category) => {
+    const revision = snapshot.current?.revision;
+    const remove = async (deleteItems) => {
+      const saved = await safeSave((data) => ({
+        ...data,
+        categories: data.categories.filter(({ id }) => id !== category.id),
+        items: data.items.map((item) => categoryOf(item) === category.id
+          ? { ...item, categoryId: null, isDeleted: deleteItems || item.isDeleted }
+          : item),
+      }), revision);
+      if (saved) setNewItemCategory((current) => current === category.id ? uncategorized.id : current);
+      setConfirmModal({ isOpen: false, message: '', onConfirm: null });
+    };
+    setConfirmModal({
+      isOpen: true,
+      message: `“${category.name}” 대분류를 삭제합니다. 품목을 남기면 미분류로 이동합니다. 품목도 삭제하면 선택 목록에서 사라지고, 기존 대장 기록은 유지됩니다.`,
+      alternateAction: { label: '품목은 남기기', onClick: () => remove(false) },
+      confirmLabel: '품목도 삭제',
+      onConfirm: () => remove(true),
+    });
   };
 
   const processFile = (file) => {
@@ -419,7 +487,7 @@ export default function App() {
             isOpen: true,
             message: '파일을 불러오면 현재 작성 중인 내용이 덮어씌워집니다. 진행하시겠습니까?',
             onConfirm: async () => {
-              const saved = await safeSave(() => ({ ...data, agencies: data.agencies || [] }), revision);
+              const saved = await safeSave(() => ({ ...data, agencies: data.agencies || [], categories: data.categories || [] }), revision);
               if (saved) setActiveTab('calendar');
               setConfirmModal({ isOpen: false, message: '', onConfirm: null });
             }
@@ -437,7 +505,7 @@ export default function App() {
   const handlePrint = () => window.print();
   
   const handleDownloadData = () => {
-    const data = { logs: logs, items: items, agencies: agencies, exportDate: new Date().toISOString() };
+    const data = { logs, items, agencies, categories, exportDate: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a'); link.href = url; link.download = `물품대장_백업_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
@@ -490,6 +558,14 @@ export default function App() {
   const reportData = getMonthlyReport();
   const yearlyStats = getYearlyOrgStats();
   const getItemName = (id) => items.find(i => i.id === id)?.name || '삭제된 품목';
+  const categoryGroups = [...categories, uncategorized];
+  const groupedItems = new Map(categoryGroups.map(({ id }) => [id, []]));
+  for (const item of items) {
+    if (!item.isDeleted) groupedItems.get(categoryOf(item))?.push(item);
+  }
+  const categoryOptions = categoryGroups.map(({ id, name }) => <option key={id} value={id}>{name}</option>);
+  const recordItems = groupedItems.get(newItemData.categoryId) || [];
+  const selectedRecordItem = recordItems.some(({ id }) => id === newItemData.itemId) ? newItemData.itemId : '';
 
   return (
     <div className="min-h-dvh bg-gray-50 text-slate-800 font-sans print:bg-white print:min-h-0"
@@ -661,24 +737,57 @@ export default function App() {
             {activeTab === 'items' && (
               <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-3 sm:p-6 no-print">
                 <h2 className="text-lg font-bold mb-4 flex items-center gap-2 shrink-0"><Package className="w-5 h-5 text-emerald-600" />물품 목록 관리</h2>
-                 <div className="flex gap-2 mb-6 shrink-0">
-                  <input type="text" value={newItemName} onChange={(e) => setNewItemName(e.target.value)} placeholder="새 물품명 입력" className="min-w-0 flex-1 border border-gray-300 rounded-lg px-3 sm:px-4 py-2 outline-none focus:ring-2 focus:ring-emerald-500" onKeyPress={(e) => e.key === 'Enter' && handleCreateItem()} />
-                  <button onClick={handleCreateItem} className="shrink-0 bg-emerald-600 text-white px-3 sm:px-6 py-2 rounded-lg font-bold flex items-center gap-2"><Plus className="w-4 h-4" /> 추가</button>
+                <div className="mb-6 space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  <form className="flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); handleCreateCategory(); }}>
+                    <input aria-label="새 대분류 이름" placeholder="새 대분류 이름" value={newCategoryName}
+                      onChange={(e) => setNewCategoryName(e.target.value)} className={`${selectClass} flex-1`} />
+                    <button type="submit" className="shrink-0 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-700">
+                      대분류 생성
+                    </button>
+                  </form>
+                  <form className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,10rem)_auto]"
+                    onSubmit={(e) => { e.preventDefault(); handleCreateItem(); }}>
+                    <input aria-label="새 물품명" value={newItemName} onChange={(e) => setNewItemName(e.target.value)}
+                      placeholder="새 물품명 입력" className={`${selectClass} col-span-2 sm:col-span-1`} />
+                    <select aria-label="새 물품의 대분류" className={selectClass}
+                      value={createItemCategory}
+                      onChange={(e) => setNewItemCategory(Number(e.target.value))}>{categoryOptions}</select>
+                    <button type="submit" className="shrink-0 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-700">
+                      품목 추가
+                    </button>
+                  </form>
                 </div>
-                <div className="space-y-2">
-                  {items.map((item) => {
-                    if (item.isDeleted) return null;
-                    return (
-                      <div key={item.id} className="flex justify-between items-center p-3 bg-white border border-gray-100 rounded-lg shadow-sm hover:border-emerald-200 transition-colors">
-                        <span className="min-w-0 break-words font-medium text-gray-700">{item.name}</span>
-                        <div className="flex shrink-0 items-center gap-1">
-                          <div className="flex flex-col mr-2"><button onClick={() => handleMoveItem(item.id, 'up')} className="p-1 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded" title="위로 이동"><ArrowUp className="w-3 h-3" /></button><button onClick={() => handleMoveItem(item.id, 'down')} className="p-1 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded" title="아래로 이동"><ArrowDown className="w-3 h-3" /></button></div>
-                          <button onClick={() => handleDeleteItem(item.id)} className="text-red-400 hover:text-red-600 p-2 rounded-full hover:bg-red-50" title="삭제"><Trash2 className="w-4 h-4" /></button>
-                        </div>
+                <p className="mb-3 text-xs text-gray-600">품목 옆 목록에서 대분류를 바꾸고, 화살표로 같은 분류 안의 순서를 조정할 수 있습니다.</p>
+                <div className="space-y-4">
+                  {categoryGroups.map((category) => (
+                    <section key={category.id} aria-labelledby={`category-${category.id}`} className="rounded-lg border border-gray-200">
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-t-lg bg-gray-50 px-3 py-2">
+                        <h3 id={`category-${category.id}`} className="min-w-0 break-words font-bold text-gray-800">
+                          {category.name} <span className="text-xs font-normal text-gray-500">{groupedItems.get(category.id).length}개</span>
+                        </h3>
+                        {category.id !== uncategorized.id && (
+                          <button type="button" onClick={() => handleDeleteCategory(category)} className="rounded px-2 py-1 text-xs font-bold text-red-700 hover:bg-red-50">
+                            대분류 삭제
+                          </button>
+                        )}
                       </div>
-                    );
-                  })}
-                  <div className="text-center text-xs text-gray-400 py-4">* 순서 변경 화살표를 눌러 대장에 표시될 순서를 조정하세요.</div>
+                      <ul className="divide-y divide-gray-100">
+                        {groupedItems.get(category.id).map((item) => (
+                          <li key={item.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,10rem)_auto]">
+                            <span className="col-span-2 min-w-0 break-words font-medium text-gray-700 sm:col-span-1">{item.name}</span>
+                            <select aria-label={`${item.name} 대분류`} value={categoryOf(item)} className={selectClass}
+                              onChange={(e) => handleAssignCategory(item.id, Number(e.target.value))}>{categoryOptions}</select>
+                            <div className="flex items-center gap-1">
+                              <button onClick={() => handleMoveItem(item.id, 'up')} className="rounded p-2 text-gray-500 hover:bg-emerald-50" title="위로 이동"><ArrowUp className="w-4 h-4" /></button>
+                              <button onClick={() => handleMoveItem(item.id, 'down')} className="rounded p-2 text-gray-500 hover:bg-emerald-50" title="아래로 이동"><ArrowDown className="w-4 h-4" /></button>
+                              <button onClick={() => handleDeleteItem(item.id)} className="rounded p-2 text-red-500 hover:bg-red-50" title="삭제"><Trash2 className="w-4 h-4" /></button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                      {groupedItems.get(category.id).length === 0 && <p className="px-3 py-3 text-sm text-gray-500">이 분류에 품목이 없습니다.</p>}
+                    </section>
+                  ))}
                 </div>
               </div>
             )}
@@ -804,7 +913,34 @@ export default function App() {
                   </div>
                 )}
 
-                <div><label className="block text-xs font-bold text-gray-500 mb-1">물품 선택</label><div className="relative"><select value={newItemData.itemId} onChange={(e) => setNewItemData({...newItemData, itemId: e.target.value})} className="w-full border border-gray-300 rounded-lg pl-3 pr-8 py-2 appearance-none focus:ring-2 focus:ring-emerald-500 bg-white">{items.filter(item => !item.isDeleted).map(item => (<option key={item.id} value={item.id}>{item.name}</option>))}</select><div className="absolute right-3 top-2.5 pointer-events-none text-gray-500">▼</div></div></div>
+                <div className={categories.length ? 'grid gap-2 sm:grid-cols-2' : ''}>
+                  {categories.length > 0 && (
+                    <label className="block min-w-0 text-xs font-bold text-gray-500">
+                      대분류
+                      <select className={`${selectClass} mt-1 font-normal text-slate-800`}
+                        value={groupedItems.has(newItemData.categoryId) ? newItemData.categoryId : ''}
+                        onChange={(e) => {
+                          setInputError('');
+                          setNewItemData((current) => ({ ...current, categoryId: Number(e.target.value), itemId: '' }));
+                        }}>
+                        <option value="" disabled>대분류 선택</option>
+                        {categoryOptions}
+                      </select>
+                    </label>
+                  )}
+                  <label className="block min-w-0 text-xs font-bold text-gray-500">
+                    물품 선택
+                    <select className={`${selectClass} mt-1 font-normal text-slate-800 disabled:bg-gray-100`}
+                      value={selectedRecordItem} disabled={recordItems.length === 0}
+                      onChange={(e) => {
+                        setInputError('');
+                        setNewItemData((current) => ({ ...current, itemId: Number(e.target.value) }));
+                      }}>
+                      <option value="" disabled>{newItemData.categoryId === '' ? '대분류를 먼저 선택하세요' : recordItems.length ? '품목 선택' : '선택할 품목이 없습니다'}</option>
+                      {recordItems.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                    </select>
+                  </label>
+                </div>
                 <div className="grid grid-cols-3 gap-2">
                   <div className="col-span-2 relative">
                     <label className="block text-xs font-bold text-gray-500 mb-1">
@@ -875,14 +1011,19 @@ export default function App() {
             <div className="flex items-center gap-3 mb-4 text-red-600"><AlertTriangle className="w-6 h-6" /><h3 id="confirm-title" className="font-bold text-lg">확인 필요</h3></div>
             <p id="confirm-message" className="text-gray-600 mb-6">{confirmModal.message}</p>
             {serverError && <p className="text-red-700 mb-4">{serverError}</p>}
-            <div className="flex justify-end gap-3">
+            <div className="flex flex-wrap justify-end gap-2">
               <button onClick={() => {
                 setConfirmModal({ isOpen: false, message: '', onConfirm: null });
                 if (confirmModal.confirmOnEnter) agencyInput.current?.focus();
               }} className="px-4 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold hover:bg-gray-300">취소</button>
+              {confirmModal.alternateAction && (
+                <button onClick={confirmModal.alternateAction.onClick} className="rounded-lg border border-emerald-600 px-3 py-2 font-bold text-emerald-700 hover:bg-emerald-50">
+                  {confirmModal.alternateAction.label}
+                </button>
+              )}
               <button autoFocus={confirmModal.confirmOnEnter} onClick={confirmModal.onConfirm}
                 onKeyDown={(event) => { if (event.key === 'Enter' && event.repeat) event.preventDefault(); }}
-                className="px-4 py-2 rounded-lg bg-red-600 text-white font-bold hover:bg-red-700">확인</button>
+                className="px-4 py-2 rounded-lg bg-red-600 text-white font-bold hover:bg-red-700">{confirmModal.confirmLabel || '확인'}</button>
             </div>
           </div>
         </div>

@@ -22,6 +22,20 @@ def validate(data):
         raise ValueError("items, logs, agencies 형식이 올바르지 않습니다.")
     if any(not isinstance(name, str) for name in agencies):
         raise ValueError("기관명은 문자열이어야 합니다.")
+    categories = data.get("categories", [])
+    if not isinstance(categories, list):
+        raise ValueError("대분류는 배열이어야 합니다.")
+    category_ids = set()
+    category_names = set()
+    for category in categories:
+        if not isinstance(category, dict) or not valid_id(category.get("id")):
+            raise ValueError("대분류 정보가 올바르지 않습니다.")
+        name = category.get("name")
+        if (not isinstance(name, str) or not name.strip() or name != name.strip()
+                or name == "미분류" or name in category_names or category["id"] in category_ids):
+            raise ValueError("대분류 이름이 올바르지 않거나 중복됩니다.")
+        category_ids.add(category["id"])
+        category_names.add(name)
     item_ids = set()
     for item in items:
         if (
@@ -32,6 +46,9 @@ def validate(data):
             or type(item.get("isDeleted", False)) is not bool
         ):
             raise ValueError("물품 정보가 올바르지 않거나 물품 ID가 중복됩니다.")
+        category_id = item.get("categoryId")
+        if category_id is not None and (not valid_id(category_id) or category_id not in category_ids):
+            raise ValueError("물품의 대분류를 찾을 수 없습니다.")
         item_ids.add(item["id"])
     for day, entries in logs.items():
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
@@ -50,7 +67,7 @@ def validate(data):
                 or not math.isfinite(entry["qty"])
             ):
                 raise ValueError("날짜별 물품 기록이 올바르지 않습니다.")
-    return items, logs, agencies
+    return items, logs, agencies, categories
 
 
 class InventoryStore:
@@ -70,6 +87,15 @@ class InventoryStore:
                     position INTEGER NOT NULL,
                     name TEXT NOT NULL,
                     is_deleted INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS categories (
+                    id INTEGER PRIMARY KEY,
+                    position INTEGER NOT NULL,
+                    name TEXT NOT NULL UNIQUE
+                );
+                CREATE TABLE IF NOT EXISTS item_categories (
+                    item_id INTEGER PRIMARY KEY REFERENCES items(id),
+                    category_id INTEGER NOT NULL REFERENCES categories(id)
                 );
                 CREATE TABLE IF NOT EXISTS agencies (
                     position INTEGER PRIMARY KEY,
@@ -100,7 +126,7 @@ class InventoryStore:
             return self.read_snapshot(db)
 
     @staticmethod
-    def read_snapshot(db):
+    def read_snapshot(db, has_categories=True):
         with db:
             db.execute("BEGIN")
             revision = db.execute("SELECT revision FROM inventory_revision").fetchone()[0]
@@ -110,13 +136,25 @@ class InventoryStore:
                     "SELECT id, name, is_deleted FROM items ORDER BY position"
                 )
             ]
+            categories = []
+            if has_categories:
+                categories = [
+                    {"id": category_id, "name": name}
+                    for category_id, name in db.execute("SELECT id, name FROM categories ORDER BY position")
+                ]
+                assignments = dict(db.execute("SELECT item_id, category_id FROM item_categories"))
+                for item in items:
+                    if item["id"] in assignments:
+                        item["categoryId"] = assignments[item["id"]]
             agencies = [name for (name,) in db.execute("SELECT name FROM agencies ORDER BY position")]
             logs = {day: [] for (day,) in db.execute("SELECT day FROM log_days ORDER BY day")}
             for day, entry_id, item_id, org, qty in db.execute(
                 "SELECT day, id, item_id, org, qty FROM ledger_entries ORDER BY day, position"
             ):
                 logs[day].append({"id": entry_id, "itemId": item_id, "org": org, "qty": qty})
-            return {"revision": revision, "data": {"items": items, "logs": logs, "agencies": agencies}}
+            return {"revision": revision, "data": {
+                "items": items, "logs": logs, "agencies": agencies, "categories": categories,
+            }}
 
     def backup(self, path):
         with closing(self.connect()) as source, closing(sqlite3.connect(path)) as target:
@@ -134,7 +172,10 @@ class InventoryStore:
                     raise ValueError("물품대장 SQLite 파일을 확인하세요.")
                 if source.execute("PRAGMA foreign_key_check").fetchone():
                     raise ValueError("SQLite 기록의 참조가 올바르지 않습니다.")
-                snapshot = self.read_snapshot(source)
+                category_tables = {"categories", "item_categories"} & tables
+                if len(category_tables) == 1:
+                    raise ValueError("SQLite의 대분류 데이터가 불완전합니다.")
+                snapshot = self.read_snapshot(source, has_categories=bool(category_tables))
         except (sqlite3.Error, KeyError, TypeError) as error:
             raise ValueError("물품대장 SQLite 파일을 읽을 수 없습니다.") from error
         return self.replace(revision, snapshot["data"])
@@ -142,7 +183,6 @@ class InventoryStore:
     def replace(self, revision, data):
         if type(revision) is not int or revision < 0:
             raise ValueError("유효한 revision이 필요합니다.")
-        items, logs, agencies = validate(data)
         with closing(self.connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             updated = db.execute(
@@ -150,14 +190,38 @@ class InventoryStore:
             )
             if updated.rowcount != 1:
                 raise Conflict
+            # Older API clients may omit classification data when saving records.
+            if isinstance(data, dict) and "categories" not in data and isinstance(data.get("items"), list):
+                categories = [
+                    {"id": category_id, "name": name}
+                    for category_id, name in db.execute("SELECT id, name FROM categories ORDER BY position")
+                ]
+                assignments = dict(db.execute("SELECT item_id, category_id FROM item_categories"))
+                data = {**data, "categories": categories, "items": [
+                    {"categoryId": assignments[item["id"]], **item}
+                    if isinstance(item, dict) and valid_id(item.get("id")) and item["id"] in assignments
+                    else item
+                    for item in data["items"]
+                ]}
+            items, logs, agencies, categories = validate(data)
             db.execute("DELETE FROM ledger_entries")
             db.execute("DELETE FROM log_days")
+            db.execute("DELETE FROM item_categories")
             db.execute("DELETE FROM items")
+            db.execute("DELETE FROM categories")
             db.execute("DELETE FROM agencies")
             db.executemany(
                 "INSERT INTO items VALUES (?, ?, ?, ?)",
                 ((item["id"], pos, item["name"], item.get("isDeleted", False))
                  for pos, item in enumerate(items)),
+            )
+            db.executemany(
+                "INSERT INTO categories VALUES (?, ?, ?)",
+                ((category["id"], pos, category["name"]) for pos, category in enumerate(categories)),
+            )
+            db.executemany(
+                "INSERT INTO item_categories VALUES (?, ?)",
+                ((item["id"], item["categoryId"]) for item in items if item.get("categoryId") is not None),
             )
             db.executemany("INSERT INTO agencies VALUES (?, ?)", enumerate(agencies))
             db.executemany("INSERT INTO log_days VALUES (?)", ((day,) for day in logs))

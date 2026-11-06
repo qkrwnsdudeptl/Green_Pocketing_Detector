@@ -67,3 +67,5 @@ python server.py --import-json "C:\백업\물품대장.json"
 동일한 허용 네트워크에서 `GET /api/v1/inventory`로 `{"revision": 0, "data": {"items": [], "logs": {}, "agencies": []}}` 형태의 스냅샷을 읽습니다. 물품에는 `id`, `name`, `isDeleted`가 있고, `logs`는 날짜별 `id`, `itemId`, `org`, `qty` 기록 배열입니다. `agencies`는 기관명 배열입니다.
 
 `PUT /api/v1/inventory`는 `Content-Type: application/json`과 마지막으로 읽은 `revision`, 변경한 전체 `data`를 받습니다. 저장에 성공하면 새 `revision`을 반환합니다. 다른 사용자가 먼저 저장하면 HTTP 409를 반환하므로 최신 스냅샷을 읽고 변경을 다시 적용합니다. SQLite 파일을 공유 드라이브에 두고 여러 프로그램에서 직접 쓰는 방식은 피합니다.
+
+대분류 목록은 `data.categories`의 `id`, `name` 배열입니다. 분류된 물품에는 `categoryId`가 있고, 미분류는 해당 필드가 없거나 `null`입니다. 기존 API 연동에서 `categories`를 생략하면 서버가 기존 분류를 유지합니다.
