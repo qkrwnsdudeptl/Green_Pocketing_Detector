@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Start', 'On', 'Off', 'Status')]
+    [ValidateSet('Start', 'Stop', 'On', 'Off', 'Status')]
     [string]$Action = 'Start',
     [switch]$NoBrowser
 )
@@ -32,6 +32,18 @@ try {
     }
 
     switch ($Action) {
+        'Stop' {
+            $pathPattern = [regex]::Escape($serverScript)
+            $scriptArgument = '(?:^|\s)(?:"{0}"|{0})(?=\s|$)' -f $pathPattern
+            $servers = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+                Where-Object { $_.CommandLine -match $scriptArgument })
+            if ($servers.Count -eq 0) {
+                Write-Host 'Inventory server is already stopped.'
+                break
+            }
+            Stop-Process -Id $servers.ProcessId
+            Write-Host 'Inventory server stopped.'
+        }
         'On' {
             if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'dist/index.html'))) {
                 throw 'Build the web app first with npm ci and npm run build.'
