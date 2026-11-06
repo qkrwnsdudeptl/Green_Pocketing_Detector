@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Calendar, Package, Plus, Trash2, Save, X, ChevronLeft, ChevronRight, Printer, Download, Upload, FileJson, AlertTriangle, BarChart3, FileText, FileType, Search, ArrowUp, ArrowDown, CheckCircle, FolderOpen, Building, FileUp, FileDown, RefreshCw } from 'lucide-react';
 import { engToKor } from './hangeul.js'; 
 
@@ -13,6 +13,25 @@ const navigation = [
   { id: 'data', label: '데이터 관리', icon: Save },
 ];
 const nextId = (records) => records.reduce((next, record) => Math.max(next, record.id + 1), Date.now());
+const agencyKey = (name) => name.replace(/\s+/g, '');
+
+function indexAgencies(agencies, logs) {
+  const index = new Map();
+  for (const name of agencies) {
+    const key = agencyKey(name);
+    if (key && !index.has(key)) index.set(key, { name, hasHistory: false });
+  }
+  for (const date of Object.keys(logs).sort()) {
+    for (const { org } of logs[date]) {
+      const key = agencyKey(org);
+      if (!key) continue;
+      const known = index.get(key);
+      if (known) known.hasHistory = true;
+      else index.set(key, { name: org.trim(), hasHistory: true });
+    }
+  }
+  return index;
+}
 
 async function inventoryRequest(options, url = inventoryUrl) {
   const response = await fetch(url, options);
@@ -35,6 +54,8 @@ export default function App() {
   const [items, setItems] = useState([]);
   const [logs, setLogs] = useState({});
   const [agencies, setAgencies] = useState([]);
+  const agencyIndex = useMemo(() => indexAgencies(agencies, logs), [agencies, logs]);
+  const agencyName = (name) => agencyIndex.get(agencyKey(name))?.name ?? name;
 
   const [matchedAgencies, setMatchedAgencies] = useState([]); 
   const [matchIndex, setMatchIndex] = useState(-1); 
@@ -43,9 +64,11 @@ export default function App() {
   const [inputError, setInputError] = useState('');
   
   const [newItemData, setNewItemData] = useState({ itemId: '', org: '', qty: '' });
+  const agencyInput = useRef(null);
   const [newAgencyName, setNewAgencyName] = useState('');
   const [newItemName, setNewItemName] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: '', onConfirm: null });
 
   const showData = useCallback((data) => {
     setItems(data.items || []);
@@ -139,8 +162,12 @@ export default function App() {
   useEffect(() => {
     const handleEsc = (event) => {
       if (event.key === 'Escape') {
-        setIsModalOpen(false);
         setConfirmModal({ isOpen: false, message: '', onConfirm: null });
+        if (confirmModal.isOpen) {
+          if (confirmModal.confirmOnEnter) agencyInput.current?.focus();
+          return;
+        }
+        setIsModalOpen(false);
         setInputError('');
         setMatchedAgencies([]);
         setMatchIndex(-1);
@@ -148,10 +175,9 @@ export default function App() {
     };
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
-  }, []);
+  }, [confirmModal.isOpen, confirmModal.confirmOnEnter]);
 
   const [selectedDate, setSelectedDate] = useState(null);
-  const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: '', onConfirm: null });
   const [isDragging, setIsDragging] = useState(false);
   const dragCounter = useRef(0);
   const [selectedOrg, setSelectedOrg] = useState('ALL'); 
@@ -171,7 +197,30 @@ export default function App() {
   const isSameDay = (d1, d2) => d1 && d2 && d1.getFullYear() === d2.getFullYear() && d1.getMonth() === d2.getMonth() && d1.getDate() === d2.getDate();
   const getMonthlyStats = () => { /* ... */ const stats={}; getDaysInMonth(currentDate).forEach(day=>{const k=formatDateKey(day);if(logs[k])logs[k].forEach(l=>{const i=items.find(it=>it.id===l.itemId);const n=i?i.name:'알 수 없음';stats[n]=(stats[n]||0)+l.qty;})}); return stats; };
   const getMonthlyReport = () => { /* ... */ const y=currentDate.getFullYear(),m=currentDate.getMonth()+1;const ml=[];Object.keys(logs).forEach(k=>{const[ly,lm,ld]=k.split('-').map(Number);if(ly===y&&lm===m)logs[k].forEach(l=>ml.push({...l,date:k,day:ld}));});const rd={};items.forEach(i=>{const il=ml.filter(l=>l.itemId===i.id);if(il.length>0)rd[i.id]={name:i.name,logs:il.sort((a,b)=>a.day-b.day),totalQty:il.reduce((s,l)=>s+l.qty,0)};});return rd; };
-  const getYearlyOrgStats = () => { /* ... */ const y=currentDate.getFullYear();const al=[];Object.keys(logs).forEach(k=>{const[ly,lm,ld]=k.split('-').map(Number);if(ly===y)logs[k].forEach(l=>al.push({...l,dateKey:k,month:lm,day:ld}));});const ao=Array.from(new Set(al.map(l=>l.org))).sort();const fl=selectedOrg==='ALL'?al:al.filter(l=>l.org===selectedOrg);const gd={};fl.forEach(l=>{if(!gd[l.org])gd[l.org]={logs:[],totalQty:0};gd[l.org].logs.push(l);gd[l.org].totalQty+=l.qty;});Object.values(gd).forEach(d=>d.logs.sort((a,b)=>a.month!==b.month?a.month-b.month:a.day-b.day));return{allOrgs:ao,sortedGroupedData:Object.entries(gd).sort(([,a],[,b])=>b.totalQty-a.totalQty),totalCount:fl.length}; };
+  const getYearlyOrgStats = () => {
+    const allOrgs = new Set();
+    const groups = new Map();
+    let totalCount = 0;
+    for (const dateKey of Object.keys(logs).sort()) {
+      const [year, month, day] = dateKey.split('-').map(Number);
+      if (year !== currentDate.getFullYear()) continue;
+      for (const log of logs[dateKey]) {
+        const name = agencyName(log.org);
+        allOrgs.add(name);
+        if (selectedOrg !== 'ALL' && agencyKey(selectedOrg) !== agencyKey(name)) continue;
+        if (!groups.has(name)) groups.set(name, { logs: [], totalQty: 0 });
+        const group = groups.get(name);
+        group.logs.push({ ...log, dateKey, month, day });
+        group.totalQty += log.qty;
+        totalCount += 1;
+      }
+    }
+    return {
+      allOrgs: [...allOrgs].sort(),
+      sortedGroupedData: [...groups].sort(([, a], [, b]) => b.totalQty - a.totalQty),
+      totalCount,
+    };
+  };
   const handleExportWord = () => { /* ...기존과 완전 동일... */ };
 
   const handleDayClick = (date) => {
@@ -186,11 +235,29 @@ export default function App() {
   };
 
   // 🔥 [수정] 달력 기록 추가 시 (Safe Save 적용)
-  const handleAddItem = async () => {
+  const handleAddItem = () => {
     if (!newItemData.itemId) { setInputError("물품을 선택해주세요."); return; }
     if (!newItemData.qty || Number(newItemData.qty) <= 0) { setInputError("수량은 1개 이상 입력해야 합니다!"); return; }
-    setInputError(''); 
+    setInputError('');
+    const typedName = newItemData.org.trim();
+    const known = agencyIndex.get(agencyKey(typedName));
+    if (known && !known.hasHistory && known.name !== typedName) {
+      setConfirmModal({
+        isOpen: true,
+        message: `“${known.name}”을(를) 입력하셨나요?`,
+        confirmOnEnter: true,
+        onConfirm: () => {
+          setConfirmModal({ isOpen: false, message: '', onConfirm: null });
+          agencyInput.current?.focus();
+          saveEntry(known.name);
+        },
+      });
+      return;
+    }
+    saveEntry(known?.name ?? typedName);
+  };
 
+  const saveEntry = async (org) => {
     const saved = await safeSave((latestData) => {
       const itemId = Number(newItemData.itemId);
       if (!latestData.items.some((item) => item.id === itemId && !item.isDeleted)) {
@@ -198,7 +265,7 @@ export default function App() {
       }
       const currentLogs = latestData.logs || {};
       const entries = currentLogs[selectedDate] || [];
-      const newEntry = { id: nextId(entries), itemId, org: newItemData.org, qty: Number(newItemData.qty) };
+      const newEntry = { id: nextId(entries), itemId, org, qty: Number(newItemData.qty) };
       return {
         ...latestData,
         logs: { ...currentLogs, [selectedDate]: [...entries, newEntry] }
@@ -225,7 +292,8 @@ export default function App() {
       setNewItemData(prev => ({ ...prev, org: matchedAgencies[nextIndex] }));
     }
     else if (e.key === 'Enter') {
-      if (e.nativeEvent && e.nativeEvent.isComposing) return; 
+      if (e.repeat || e.nativeEvent?.isComposing) return;
+      e.preventDefault();
       handleAddItem();
     }
   };
@@ -254,7 +322,9 @@ export default function App() {
     if (!name) return;
     const saved = await safeSave((latestData) => {
       const names = latestData.agencies || [];
-      if (names.includes(name)) throw new Error('이미 등록된 기관입니다.');
+      if (names.some((existing) => agencyKey(existing) === agencyKey(name))) {
+        throw new Error('이미 등록된 기관입니다.');
+      }
       return { ...latestData, agencies: [...names, name] };
     });
     if (saved) setNewAgencyName((current) => current === newAgencyName ? '' : current);
@@ -286,7 +356,7 @@ export default function App() {
     reader.onload = async (e) => {
       const content = e.target.result;
       const lines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0); 
-      const uniqueLines = [...new Set(lines)];
+      const uniqueLines = [...indexAgencies(lines, {}).values()].map(({ name }) => name);
       
       if (uniqueLines.length === 0) alert("파일에 유효한 내용이 없습니다.");
       else {
@@ -519,7 +589,7 @@ export default function App() {
                                   <div className="flex flex-col print:block">
                                     <span className="font-bold whitespace-normal break-words leading-tight">[{getItemName(log.itemId)}]</span>
                                     <span className="print:hidden h-px bg-emerald-200 my-0.5"></span>
-                                    <span className="whitespace-normal break-words leading-tight text-[11px]">{log.org} ({log.qty}개)</span>
+                                    <span className="whitespace-normal break-words leading-tight text-[11px]">{agencyName(log.org)} ({log.qty}개)</span>
                                   </div>
                                 </div>
                               ))}
@@ -545,7 +615,7 @@ export default function App() {
                           <thead className="bg-gray-50 print:bg-gray-100"><tr><th className="py-2 pl-4 w-1/5 border-b border-r border-gray-300 print:border-black">일자</th><th className="py-2 pl-4 w-3/5 border-b border-r border-gray-300 print:border-black">제공 기관 (사용처)</th><th className="py-2 pr-4 text-right w-1/5 border-b border-gray-300 print:border-black">수량</th></tr></thead>
                           <tbody>
                             {data.logs.map(log => (
-                              <tr key={log.id} className="border-b border-gray-200 hover:bg-gray-50 print:border-black"><td className="py-2 pl-4 border-r border-gray-200 print:border-black text-gray-700 print:text-black">{currentDate.getMonth() + 1}월 {log.day}일</td><td className="py-2 pl-4 border-r border-gray-200 print:border-black font-medium text-gray-900 print:text-black">{log.org}</td><td className="py-2 pr-4 text-right text-gray-900 print:text-black">{log.qty}</td></tr>
+                              <tr key={log.id} className="border-b border-gray-200 hover:bg-gray-50 print:border-black"><td className="py-2 pl-4 border-r border-gray-200 print:border-black text-gray-700 print:text-black">{currentDate.getMonth() + 1}월 {log.day}일</td><td className="py-2 pl-4 border-r border-gray-200 print:border-black font-medium text-gray-900 print:text-black">{agencyName(log.org)}</td><td className="py-2 pr-4 text-right text-gray-900 print:text-black">{log.qty}</td></tr>
                             ))}
                             <tr className="bg-gray-50 font-bold print:bg-white"><td colSpan="2" className="py-2 pr-4 text-right border-r border-gray-200 print:border-black print:text-black">월계</td><td className="py-2 pr-4 text-right text-emerald-700 print:text-black border-t border-gray-300 print:border-black">{data.totalQty}</td></tr>
                           </tbody>
@@ -722,7 +792,7 @@ export default function App() {
               <div className="bg-gray-50 rounded-lg p-3 min-h-[100px] max-h-[150px] overflow-y-auto mb-4 border border-gray-200">
                 <h4 className="text-xs font-bold text-gray-500 mb-2 uppercase">등록된 내역</h4>
                 {logs[selectedDate]?.length > 0 ? (
-                  <div className="space-y-2">{logs[selectedDate].map(log => (<div key={log.id} className="flex justify-between items-center bg-white p-2 rounded border border-gray-200 shadow-sm text-sm"><div className="flex flex-col"><span className="font-bold text-emerald-700">{getItemName(log.itemId)}</span><span className="text-xs text-gray-500">{log.org} | {log.qty}개</span></div><button onClick={() => handleDeleteEntry(selectedDate, log.id)} className="text-red-400 hover:text-red-600 p-2 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button></div>))}</div>
+                  <div className="space-y-2">{logs[selectedDate].map(log => (<div key={log.id} className="flex justify-between items-center bg-white p-2 rounded border border-gray-200 shadow-sm text-sm"><div className="flex flex-col"><span className="font-bold text-emerald-700">{getItemName(log.itemId)}</span><span className="text-xs text-gray-500">{agencyName(log.org)} | {log.qty}개</span></div><button onClick={() => handleDeleteEntry(selectedDate, log.id)} className="text-red-400 hover:text-red-600 p-2 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button></div>))}</div>
                 ) : ( <div className="text-center text-gray-400 text-sm py-4">아직 기록이 없습니다.</div> )}
               </div>
               <div className="space-y-3 border-t pt-4">
@@ -753,6 +823,7 @@ export default function App() {
                     )}
 
                     <input 
+                      ref={agencyInput}
                       type="text" 
                       placeholder="예: 낭성복지회관" 
                       value={newItemData.org} 
@@ -763,8 +834,11 @@ export default function App() {
                         const converted = engToKor(e.target.value);
                         setNewItemData(prev => ({...prev, org: converted})); 
 
-                        if (converted.length > 0 && agencies.length > 0) {
-                          const matches = agencies.filter(agency => agency.includes(converted));
+                        const query = agencyKey(converted);
+                        if (query) {
+                          const matches = [...agencyIndex]
+                            .filter(([key]) => key.includes(query))
+                            .map(([, { name }]) => name);
                           if (matches.length > 0) {
                             setMatchedAgencies(matches);
                             setMatchIndex(0); 
@@ -796,11 +870,20 @@ export default function App() {
 
       {confirmModal.isOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[120] p-4 no-print animate-in fade-in duration-200">
-          <div className="bg-white rounded-lg shadow-xl p-4 sm:p-6 max-w-sm w-full max-h-full overflow-y-auto transform scale-100">
-            <div className="flex items-center gap-3 mb-4 text-red-600"><AlertTriangle className="w-6 h-6" /><h3 className="font-bold text-lg">확인 필요</h3></div>
-            <p className="text-gray-600 mb-6">{confirmModal.message}</p>
+          <div role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message"
+            className="bg-white rounded-lg shadow-xl p-4 sm:p-6 max-w-sm w-full max-h-full overflow-y-auto transform scale-100">
+            <div className="flex items-center gap-3 mb-4 text-red-600"><AlertTriangle className="w-6 h-6" /><h3 id="confirm-title" className="font-bold text-lg">확인 필요</h3></div>
+            <p id="confirm-message" className="text-gray-600 mb-6">{confirmModal.message}</p>
             {serverError && <p className="text-red-700 mb-4">{serverError}</p>}
-            <div className="flex justify-end gap-3"><button onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })} className="px-4 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold hover:bg-gray-300">취소</button><button onClick={confirmModal.onConfirm} className="px-4 py-2 rounded-lg bg-red-600 text-white font-bold hover:bg-red-700">확인</button></div>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => {
+                setConfirmModal({ isOpen: false, message: '', onConfirm: null });
+                if (confirmModal.confirmOnEnter) agencyInput.current?.focus();
+              }} className="px-4 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold hover:bg-gray-300">취소</button>
+              <button autoFocus={confirmModal.confirmOnEnter} onClick={confirmModal.onConfirm}
+                onKeyDown={(event) => { if (event.key === 'Enter' && event.repeat) event.preventDefault(); }}
+                className="px-4 py-2 rounded-lg bg-red-600 text-white font-bold hover:bg-red-700">확인</button>
+            </div>
           </div>
         </div>
       )}
